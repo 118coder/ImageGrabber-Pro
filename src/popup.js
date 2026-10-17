@@ -26,7 +26,7 @@ const state = {
   thorough: false,
   thumbSize: 116,
   hideBroken: false,
-  theme: 'dark'
+  theme: 'light'
 };
 
 /** 预览失败的条目（url → 原因）。缩略图加载失败时写入，用于"隐藏失效"筛选 */
@@ -785,7 +785,7 @@ const THEME_ICONS = {
 };
 
 function applyTheme(theme, opts) {
-  const t = theme === 'light' ? 'light' : 'dark';
+  const t = theme === 'dark' ? 'dark' : 'light';
   state.theme = t;
   document.documentElement.dataset.theme = t;
   const ic = $('themeIcon');
@@ -921,7 +921,7 @@ async function boot() {
     thorough: !!ui.thorough,
     thumbSize: ui.thumbSize || 116,
     hideBroken: !!ui.hideBroken,
-    theme: ui.theme === 'light' ? 'light' : 'dark'
+    theme: ui.theme === 'dark' ? 'dark' : 'light'
   });
   $('q').value = state.q;
   $('minSize').value = String(state.minSize);
