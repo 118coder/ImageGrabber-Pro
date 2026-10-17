@@ -95,12 +95,18 @@ function urlFilterFor(url) {
 }
 
 /**
- * 在 fn() 执行期间，为该图片地址临时挂上"来源页 Referer"。
- * 很多图床/相册站靠 Referer 防盗链，扩展 fetch 默认不带 Referer —— 这一步就是关键。
+ * 在 fn() 执行期间，为该图片地址临时改写请求头。
+ *
+ * 两种防盗链策略（实测都需要）：
+ *   'spoof'  把 Referer 伪造成来源页——多数站点校验 Referer 是否属于自己域名
+ *   'omit'   把 Referer 清空——另一些站点把"没有 Referer"当作直接访问而放行
+ * 业务上先试 spoof，失败再用 omit 重试一次，两条路合起来覆盖面最大。
  */
-async function withReferer(imageUrl, pageUrl, fn, extraHeaders) {
+async function withReferer(imageUrl, pageUrl, fn, opts) {
   const settings = await getSettings();
   if (!settings.hotlinkBypass || !pageUrl) return fn();
+  const mode = opts && opts.mode === 'omit' ? 'omit' : 'spoof';
+
   let origin = '';
   try {
     const p = new URL(pageUrl);
@@ -113,10 +119,14 @@ async function withReferer(imageUrl, pageUrl, fn, extraHeaders) {
   if (!filter) return fn();
 
   const id = 910000 + (dnrSeq++ % 80000);
-  const requestHeaders = [{ header: 'referer', operation: 'set', value: origin }];
-  if (extraHeaders && extraHeaders.origin) {
+  const requestHeaders =
+    mode === 'omit'
+      ? [{ header: 'referer', operation: 'remove' }]
+      : [{ header: 'referer', operation: 'set', value: origin }];
+  if (mode !== 'omit' && opts && opts.withOrigin) {
     requestHeaders.push({ header: 'origin', operation: 'set', value: origin.replace(/\/$/, '') });
   }
+
   try {
     await chrome.declarativeNetRequest.updateSessionRules({
       removeRuleIds: [id],
@@ -140,6 +150,15 @@ async function withReferer(imageUrl, pageUrl, fn, extraHeaders) {
   } finally {
     chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [id] }).catch(() => {});
   }
+}
+
+/** 带防盗链双策略的抓取：先伪装 Referer，失败再清空 Referer 重试 */
+async function fetchWithHotlinkRetry(imageUrl, pageUrl, run) {
+  const first = await withReferer(imageUrl, pageUrl, run, { mode: 'spoof' });
+  if (first && first.ok) return first;
+  const second = await withReferer(imageUrl, pageUrl, run, { mode: 'omit' });
+  if (second && second.ok) return second;
+  return first || second;
 }
 
 // ------------------------------------------------------------------ 缩略图缓存
@@ -439,9 +458,9 @@ async function downloadOne(item, index, ctx) {
     }
   }
 
-  // 首选：带 Cookie / Referer 的 offscreen 抓取
+  // 首选：带 Cookie / Referer 的 offscreen 抓取（伪装 Referer 失败会再试"无 Referer"）
   if (settings.fetchFirst && /^https?:/i.test(item.url)) {
-    const fetched = await withReferer(item.url, item.pageUrl, () =>
+    const fetched = await fetchWithHotlinkRetry(item.url, item.pageUrl, () =>
       offscreenCall({ type: 'FETCH', url: item.url, wantDataUrl: false, timeout: ctx.timeout || 45000 })
     );
     if (fetched && fetched.ok && fetched.objectUrl) {
@@ -837,7 +856,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   timeout: 20000
                 });
               const result = /^https?:/i.test(msg.url)
-                ? await withReferer(msg.url, msg.pageUrl, asThumb)
+                ? await fetchWithHotlinkRetry(msg.url, msg.pageUrl, asThumb)
                 : await asThumb();
 
               if (result && result.ok && result.dataUrl) {
