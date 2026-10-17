@@ -47,6 +47,12 @@ function darkPng(w, h) {
 const PNG = darkPng(500, 400);
 
 const server = http.createServer((req, res) => {
+  // 构造"预览不可用"：这两张必须是 404，否则测不到失效筛选
+  if (/missing/.test(req.url)) {
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    res.end('not found');
+    return;
+  }
   if (/\.png/.test(req.url)) { res.writeHead(200, { 'Content-Type': 'image/png' }); res.end(PNG); return; }
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
   // 最后两张故意指向不存在的地址，用来制造"预览不可用"

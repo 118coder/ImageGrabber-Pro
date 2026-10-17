@@ -289,7 +289,11 @@ function check(name, cond, extra) {
   const picUrls = (collected.urls || []).filter((u) => /\/img\/pic\d+\.png$/.test(u));
   check('20 张普通图片全部抓到', picUrls.length === 20, picUrls.length);
   check('srcset 的大图地址在结果里（ss-1600 / pic-src-1600）', (collected.urls||[]).some(u=>u.includes('ss-1600')) && (collected.urls||[]).some(u=>u.includes('pic-src-1600')), (collected.urls||[]).filter(u=>u.includes('1600')));
-  check('懒加载属性被抓到', !!collected.kinds.lazy, collected.kinds);
+  // 1.5.0 的行为变更：深度模式会先把 data-src 写回 src 唤醒懒加载，
+  // 所以这些地址会以 img 类出现（并带上真实尺寸），不再标成 lazy。
+  // 关键是"地址被采集到"，分类标签反而更准确了。
+  const lazyUrls = (collected.urls || []).filter((u) => /\/img\/lazy\d+\.png$/.test(u));
+  check('懒加载地址全部被抓到（唤醒后归为 img）', lazyUrls.length === 6, lazyUrls);
   check('样式表背景被抓到', !!collected.kinds.css, collected.kinds);
   check('内联脚本里的转义地址被抓到', !!collected.kinds.script, collected.kinds);
   check('og:image 被抓到', !!collected.kinds.meta, collected.kinds);

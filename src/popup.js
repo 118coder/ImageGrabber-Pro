@@ -299,7 +299,7 @@ function cardHtml(it, idx) {
   return `
   <div class="card${it.w && it.h && it.w > it.h * 1.6 ? ' wide' : ''}" data-i="${idx}" title="${escapeHtml(it.url.slice(0, 300))}">
     <div class="thumb">
-      ${visual ? `<div class="ph">${icon}</div>` : `<img alt="" decoding="async" data-src="${escapeHtml(it.url)}" />`}
+      ${visual ? `<div class="ph">${icon}</div>` : `<img alt="" decoding="async" data-src="${escapeHtml(it.url)}" data-frame-id="${it.frameId == null ? 0 : it.frameId}" />`}
       <label class="chk"><input type="checkbox" data-i="${idx}" /></label>
       <span class="tag ${tagCls}">${kindLabel(it.kind)}</span>
       ${dim ? `<span class="dim">${dim}</span>` : ''}
@@ -371,55 +371,75 @@ const thumbObserver = 'IntersectionObserver' in window
       entries.forEach((en) => {
         if (!en.isIntersecting) return;
         obs.unobserve(en.target);
-        loadThumb(en.target);
+        enqueueThumb(en.target, true);
       });
     }, { root: grid, rootMargin: '300px' })
   : null;
+
+/**
+ * 缩略图调度：可视区优先 + 并发上限。
+ * 之前是"1.2 秒后一次性把所有图都发出去"，150 张图会瞬间堆满请求队列，
+ * 反而拖慢首屏。现在用一个小的并发池，先把屏幕上看得见的填满，再按顺序铺后续。
+ */
+const THUMB_CONCURRENCY = 6;
+const thumbQueue = [];
+let thumbActive = 0;
+let thumbPumpTimer = null;
+
+function enqueueThumb(img, front) {
+  if (!img || img.dataset.started || img.dataset.queued) return;
+  img.dataset.queued = '1';
+  if (front) thumbQueue.unshift(img);
+  else thumbQueue.push(img);
+  pumpThumbs();
+}
+
+function pumpThumbs() {
+  if (thumbActive >= THUMB_CONCURRENCY) return;
+  while (thumbActive < THUMB_CONCURRENCY && thumbQueue.length) {
+    const img = thumbQueue.shift();
+    if (!img || !img.isConnected || img.dataset.started) continue;
+    thumbActive++;
+    Promise.resolve(loadThumb(img)).finally(() => {
+      thumbActive--;
+      // 稍微错开，避免同一帧内连续解码多张图造成掉帧
+      clearTimeout(thumbPumpTimer);
+      thumbPumpTimer = setTimeout(pumpThumbs, 8);
+    });
+  }
+}
 
 function bindThumbs() {
   const pending = [];
   grid.querySelectorAll('img[data-src]').forEach((img) => {
     if (img.dataset.bound) return;
     img.dataset.bound = '1';
-    pending.push(img);
-    // 只在进入（或接近）可视区时才生成缩略图：150 张图不会一起挤向后台
     if (thumbObserver) {
       try {
         thumbObserver.observe(img);
+        pending.push(img);
         return;
       } catch (_) {
-        /* 观察器不可用则退化为立即加载 */
+        /* 观察器不可用则直接排队 */
       }
     }
-    loadThumb(img);
+    enqueueThumb(img);
   });
 
-  // 兜底：观察器不触发（无头环境、异常布局）时，1.2 秒后把剩下的也加载上，
-  // 避免"永远空白"——但会让先出图的顺序优先。
+  // 兜底：观察器不触发（无头环境、布局异常）时，按并发池慢慢补上，
+  // 不再是 1.2 秒后一口气全发。
   if (thumbObserver && pending.length) {
-    setTimeout(() => pending.forEach((img) => loadThumb(img)), 1200);
+    setTimeout(() => pending.forEach((img) => enqueueThumb(img)), 900);
   }
 }
 
 function loadThumb(img) {
   const url = img.dataset.src;
-  if (!url || img.dataset.started) return;
+  if (!url || img.dataset.started) return Promise.resolve();
   img.dataset.started = '1';
 
-  // 一律走后台降采样：拿回几十 KB 的小 WebP，而不是让 <img> 解码几 MB 的原图。
-  // 顺带解决防盗链（后台会带来源页 Referer + Cookie）。
-  const maxSide = thumbRequestSide();
-  sendBg({ type: 'IGP_THUMB', url, pageUrl, maxSide }).then((res) => {
-    if (res && res.ok && res.dataUrl) {
-      img.dataset.thumbSide = String(maxSide);
-      img.dataset.fallbackShown = '';
-      img.src = res.dataUrl;
-      return;
-    }
-    // 后台也拿不到（地址失效 / 被墙）：给直连最后一次机会
-    img.src = url;
-  });
-
+  // 先注册失败处理：下面可能先设直连 src 再异步换图，
+  // 监听器必须在此之前挂好，否则 404 的 error 事件会被漏掉（此前这段是死代码）。
   img.addEventListener(
     'error',
     () => {
@@ -430,6 +450,26 @@ function loadThumb(img) {
     },
     { once: true }
   );
+
+  // 一律走后台：它优先读页面已加载图片的像素（零流量），失败才回退重新下载。
+  const maxSide = thumbRequestSide();
+  return sendBg({ type: 'IGP_THUMB', url, pageUrl, tabId, frameId: img.dataset.frameId, maxSide }).then((res) => {
+    if (res && res.ok && res.dataUrl) {
+      img.dataset.thumbSide = String(maxSide);
+      img.dataset.fallbackShown = '';
+      img.src = res.dataUrl;
+      return;
+    }
+    // 后台也拿不到（地址失效 / 被墙）：直连再试一次，失败由上面监听器兜底
+    img.dataset.retried = '1';
+    img.src = url;
+    setTimeout(() => {
+      if (!img.naturalWidth && !img.dataset.fallbackShown) {
+        markThumbBroken(url, 'no-response');
+        showThumbFallback(img);
+      }
+    }, 6000);
+  });
 }
 
 /** 记录预览失败，供"隐藏失效"筛选使用；开启该开关时立即重绘 */

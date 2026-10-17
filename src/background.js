@@ -479,13 +479,33 @@ async function downloadOne(item, index, ctx) {
 }
 
 async function sendToFrame(tabId, frameId, msg, timeout = 8000) {
-  const opts = frameId == null ? {} : { frameId };
+  // frameId 可能来自 dataset（字符串）或别的消息来源，必须规范成整数：
+  // chrome.tabs.sendMessage 收到 "0" 这种字符串会直接报错，导致整条通道静默失效。
+  let fid = null;
+  if (frameId != null && frameId !== '') {
+    const n = Number(frameId);
+    fid = Number.isInteger(n) && n >= 0 ? n : null;
+  }
+  const opts = fid == null ? {} : { frameId: fid };
   try {
-    return await Promise.race([
+    const res = await Promise.race([
       chrome.tabs.sendMessage(tabId, msg, opts),
       new Promise((r) => setTimeout(() => r({ ok: false, error: '内容脚本无响应' }), timeout))
     ]);
+    return res || { ok: false, error: '无响应' };
   } catch (e) {
+    // frame 已销毁 / 该 frame 没有内容脚本：退化为广播给所有 frame
+    try {
+      if (fid != null) {
+        const res = await Promise.race([
+          chrome.tabs.sendMessage(tabId, msg),
+          new Promise((r) => setTimeout(() => r({ ok: false, error: '内容脚本无响应' }), timeout))
+        ]);
+        return res || { ok: false, error: '无响应' };
+      }
+    } catch (_) {
+      /* 落到下面返回错误 */
+    }
     return { ok: false, error: String((e && e.message) || e) };
   }
 }
@@ -767,9 +787,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           break;
         }
         case 'IGP_THUMB': {
-          // 弹窗里 <img src=...> 的 Referer 是 chrome-extension://，会被图床防盗链拒绝；
-          // 而且直接显示原图要解码整张大图。这里统一走"带来源页 Referer + Cookie 的抓取，
-          // 再降采样成小 WebP"，弹窗只拿到几十 KB 的缩略图。
+          // 缩略图优先级：先问页面里的内容脚本（命中页面自己的 HTTP 缓存，几乎零流量），
+          // 失败再退回 offscreen（扩展分区，一定会重新下载）。
+          // 原因：Chromium 的 HTTP 缓存按顶层站点分区，扩展和网页拿的不是同一份缓存。
           const maxSide = Math.max(64, Math.min(512, msg.maxSide || 256));
           const cacheKey = msg.url + '|' + maxSide;
           const hit = thumbCache.get(cacheKey);
@@ -777,41 +797,65 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             sendResponse(hit.value);
             break;
           }
-          // 同一张图正被抓取时，直接复用那个 Promise，避免重复下载
           if (thumbInflight.has(cacheKey)) {
             sendResponse(await thumbInflight.get(cacheKey));
             break;
           }
 
           const job = scheduleThumb(async () => {
-            // data:/blob: 不需要网络，直接交给 offscreen 原样返回
-            const asThumb = () =>
-              offscreenCall({
-                type: 'THUMB',
-                url: msg.url,
-                maxSide,
-                quality: msg.quality,
-                timeout: 20000
-              });
+            let payload = null;
 
-            const result = /^https?:/i.test(msg.url)
-              ? await withReferer(msg.url, msg.pageUrl, asThumb)
-              : await asThumb();
-
-            let payload;
-            if (result && result.ok && result.dataUrl) {
-              payload = {
-                ok: true,
-                dataUrl: result.dataUrl,
-                w: result.w,
-                h: result.h,
-                passthrough: !!result.passthrough
-              };
-            } else {
-              payload = { ok: false, error: (result && result.error) || '缩略图生成失败' };
+            // ① 页面内通道（零/低流量）
+            const tabId = msg.tabId != null ? msg.tabId : sender.tab && sender.tab.id;
+            if (tabId != null && /^(https?|blob|data):/i.test(msg.url)) {
+              const inPage = await sendToFrame(
+                tabId,
+                msg.frameId,
+                { type: 'IGP_PAGE_THUMB', url: msg.url, maxSide, quality: msg.quality },
+                12000
+              );
+              if (inPage && inPage.ok && inPage.dataUrl) {
+                payload = {
+                  ok: true,
+                  dataUrl: inPage.dataUrl,
+                  w: inPage.w,
+                  h: inPage.h,
+                  passthrough: !!inPage.passthrough,
+                  via: inPage.via || 'page'
+                };
+              }
             }
+
+            // ② 扩展侧通道（会重新下载，作为兜底）
+            if (!payload) {
+              const asThumb = () =>
+                offscreenCall({
+                  type: 'THUMB',
+                  url: msg.url,
+                  maxSide,
+                  quality: msg.quality,
+                  timeout: 20000
+                });
+              const result = /^https?:/i.test(msg.url)
+                ? await withReferer(msg.url, msg.pageUrl, asThumb)
+                : await asThumb();
+
+              if (result && result.ok && result.dataUrl) {
+                payload = {
+                  ok: true,
+                  dataUrl: result.dataUrl,
+                  w: result.w,
+                  h: result.h,
+                  passthrough: !!result.passthrough,
+                  via: 'offscreen'
+                };
+              } else {
+                payload = { ok: false, error: (result && result.error) || '缩略图生成失败' };
+              }
+            }
+
             if (payload.ok) {
-              if (thumbCache.size > 600) thumbCache.clear(); // 简单上限，避免常驻内存无限涨
+              if (thumbCache.size > 600) thumbCache.clear();
               thumbCache.set(cacheKey, { at: Date.now(), value: payload });
             }
             return payload;

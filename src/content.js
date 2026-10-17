@@ -121,12 +121,19 @@
       const seg = part.split(/\s+/);
       const url = abs(seg[0], base);
       if (!url) continue;
-      let weight = 0;
-      if (seg[1]) {
-        const w = parseFloat(seg[1]);
-        if (isFinite(w)) weight = seg[1].endsWith('x') ? w * 1000 : w;
+      // 描述符可能是 400w（宽度）或 2x（像素密度），分开记录，别混算
+      let w = 0;
+      let x = 1;
+      const desc = seg[1] || '';
+      if (desc) {
+        const n = parseFloat(desc);
+        if (isFinite(n)) {
+          if (/x$/i.test(desc)) x = n;
+          else w = Math.round(n);
+        }
       }
-      out.push({ url, weight });
+      // weight 只用于"在同一组 srcset 里挑最大"，w 与 x 各自归一化后取较大者
+      out.push({ url, w: w, x: x, weight: w || x * 1000 });
     }
     return out;
   }
@@ -572,11 +579,43 @@
       root.querySelectorAll('*').forEach((child) => {
         ctx.stats.scannedElements++;
         scanElementAttrs(child, col, ctx);
+        // 组件库常把背景图画在 Shadow DOM 里的自定义元素上，属性深扫看不到
+        try {
+          const bg = getComputedStyle(child).backgroundImage;
+          if (bg && bg !== 'none' && bg.indexOf('url(') !== -1) {
+            let m;
+            CSS_URL_RE.lastIndex = 0;
+            while ((m = CSS_URL_RE.exec(bg))) {
+              const u = abs(m[2], child.baseURI);
+              if (u) {
+                const r = child.getBoundingClientRect();
+                col.add(
+                  makeItem('css', u, {
+                    w: Math.round(r.width),
+                    h: Math.round(r.height),
+                    label: 'shadow 背景'
+                  })
+                );
+                rememberElement(u, child);
+              }
+            }
+          }
+        } catch (_) {
+          /* ignore */
+        }
         walkShadow(child, col, ctx, depth + 1);
       });
       root.querySelectorAll('img').forEach((im) => {
         const u = abs(im.currentSrc || im.getAttribute('src'), im.baseURI);
-        if (u) col.add(makeItem('img', u, { w: im.naturalWidth, h: im.naturalHeight, label: 'shadow DOM' }));
+        if (u) {
+          col.add(makeItem('img', u, { w: im.naturalWidth, h: im.naturalHeight, label: 'shadow DOM' }));
+          rememberElement(u, im);
+        }
+      });
+      // <picture> 在 shadow 里也要处理
+      root.querySelectorAll('source[srcset]').forEach((s) => {
+        const best = bestFromSrcset(s.getAttribute('srcset'), s.baseURI);
+        if (best) col.add(makeItem('srcset', best, { label: 'shadow picture' }));
       });
     } catch (_) {
       /* ignore */
@@ -687,6 +726,111 @@
     }
   }
 
+  /**
+   * srcset 全尺寸变体：很多站点只用当前一档，但属性里放出了多档地址。
+   * 全部列出来，用户想下原图时不会只看到缩略图。
+   */
+  function scanSrcsetVariants(col) {
+    const seen = new Set();
+    qsa('img[srcset], source[srcset], img[data-srcset], source[data-srcset]').forEach((el) => {
+      const raw = el.getAttribute('srcset') || el.getAttribute('data-srcset') || '';
+      if (!raw) return;
+      for (const c of pickSrcset(raw, el.baseURI)) {
+        if (!c.url || seen.has(c.url)) continue;
+        seen.add(c.url);
+        col.add(
+          makeItem('srcset', c.url, {
+            w: c.w || 0,
+            h: 0,
+            label: c.w ? 'srcset ' + c.w + 'w' : 'srcset ' + c.x + 'x'
+          })
+        );
+      }
+    });
+  }
+
+  /**
+   * URL 变体探测：很多图床把缩略图与原图放在同路径的不同命名下。
+   * 只做纯字符串改写、不额外发请求，真正的存在性检查留给下载阶段。
+   * 覆盖：_thumb/-300x200/缩略目录/查询串尺寸参数。
+   */
+  function scanUrlVariants(col) {
+    const DIM_PARAM = /^(?:w|h|width|height|size|quality|q|resize|fit|crop|thumb)$/i;
+    // 顺序有讲究：目录级（/thumb/）先判，否则会被文件名级规则误伤
+    const rules = [
+      { name: '去缩略目录', re: /\/(?:thumbnails?|thumbs?|small|preview)\//gi, to: '/' },
+      { name: '去缩略后缀', re: /([_\-.])(?:thumb|thumbnail|thumbs|small|mini|tiny|low|preview)(?=\.[a-z]{2,5}(?:[?#]|$))/gi, to: '' },
+      { name: '去尺寸后缀', re: /[_\-]\d{2,4}x\d{2,4}(?=\.[a-z]{2,5}(?:[?#]|$))/gi, to: '' }
+    ];
+
+    const urls = col.list().map((it) => it.url).filter((u) => /^https?:/i.test(u));
+    let n = 0;
+    for (const raw of urls) {
+      if (n > 800) break;
+
+      // 1) 查询串里的尺寸参数
+      try {
+        const u = new URL(raw);
+        const keys = [...u.searchParams.keys()];
+        if (keys.some((k) => DIM_PARAM.test(k))) {
+          const clean = new URL(raw);
+          for (const k of keys) if (DIM_PARAM.test(k)) clean.searchParams.delete(k);
+          if (clean.href !== raw) {
+            col.add(makeItem('attr', clean.href, { label: '去尺寸参数', probable: true }));
+            n++;
+          }
+        }
+      } catch (_) {
+        continue;
+      }
+
+      // 2) 路径命名变体（只看路径，避免误改查询串）
+      let pathOnly = raw;
+      try {
+        const u = new URL(raw);
+        pathOnly = u.origin + u.pathname;
+      } catch (_) {
+        continue;
+      }
+      for (const rule of rules) {
+        rule.re.lastIndex = 0;
+        const variant = pathOnly.replace(rule.re, rule.to);
+        if (variant !== pathOnly && variant.length > 12) {
+          col.add(makeItem('attr', variant, { label: rule.name, probable: true }));
+          n++;
+          break;
+        }
+      }
+    }
+  }
+
+  /**
+   * 懒加载解锁：把 data-* 里的真实地址写回 src，让浏览器真的去加载。
+   * 这样"读元素像素"的零流量缩略图通道才能命中它。
+   */
+  function unlockLazyImages() {
+    let n = 0;
+    const ATTRS = ['data-src', 'data-original', 'data-lazy-src', 'data-lazy', 'data-echo', 'data-url', 'data-full', 'data-large'];
+    qsa('img').forEach((el) => {
+      if (el.naturalWidth > 0) return;
+      for (const a of ATTRS) {
+        const v = el.getAttribute(a);
+        if (!v) continue;
+        const u = abs(v, el.baseURI);
+        if (!u || u === el.src) continue;
+        try {
+          el.loading = 'eager';
+          el.src = u;
+          n++;
+        } catch (_) {
+          /* ignore */
+        }
+        break;
+      }
+    });
+    return n;
+  }
+
   function scanResourceTiming(col) {
     let entries;
     try {
@@ -757,9 +901,19 @@
       safe('inline-style', () => scanInlineStyles(col));
       safe('stylesheet', () => scanStyleSheets(col));
       safe('timing', () => scanResourceTiming(col));
+      // 新增通道：多分辨率变体与命名变体（纯字符串推导，不发请求）
+      safe('srcset-variants', () => scanSrcsetVariants(col));
+      safe('url-variants', () => scanUrlVariants(col));
 
       if (o.deep) {
+        // 深度模式下先把懒加载唤醒，再扫一遍元素（顺序很重要：
+        // 唤醒后 naturalWidth 才有值，缩略图通道才能零流量取图）
+        if (o.unlockLazy !== false) {
+          const unlocked = unlockLazyImages();
+          if (unlocked) ctx.stats.unlockedLazy = unlocked;
+        }
         await deepScan(col, ctx, o);
+        safe('img-after-unlock', () => scanImgElements(col, ctx));
         if (o.scripts) safe('script-text', () => scanScriptText(col, ctx));
       }
       if (o.thorough) {
@@ -809,6 +963,216 @@
     } catch (e) {
       return { ok: false, error: '视频源受保护，请用"区域截图"下载' };
     }
+  }
+
+  // ---------------------------------------------------------------- 页面内缩略图
+  /**
+   * 在页面上下文里取缩略图。
+   *
+   * 为什么必须放在页面里：Chromium 的 HTTP 缓存按"顶层站点"分区。扩展的 offscreen 文档属于
+   * chrome-extension:// 分区，和网页分区完全隔离，所以从扩展抓图一定会重新下载一遍
+   * （实测 100% 重复下载）。而在页面上下文 fetch 同一地址会直接命中页面已建立的缓存，
+   * 字节数近乎为零。
+   *
+   * 另外，对已经是同一元素的图片（<img>/背景图/CSS），可以直接画到 canvas 拿像素，
+   * 连 fetch 都不需要。
+   */
+  const thumbMemo = new Map(); // url|side -> dataUrl（页面生命周期内复用）
+
+  function makeCanvas(w, h) {
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, w);
+    c.height = Math.max(1, h);
+    return c;
+  }
+
+  /** 把已经解码好的图像源（img/canvas/bitmap）降采样成 WebP dataURL */
+  function downsample(source, srcW, srcH, maxSide, quality) {
+    const scale = Math.min(1, maxSide / Math.max(srcW, srcH));
+    const w = Math.max(1, Math.round(srcW * scale));
+    const h = Math.max(1, Math.round(srcH * scale));
+    const canvas = makeCanvas(w, h);
+    const ctx = canvas.getContext('2d', { alpha: true });
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(source, 0, 0, w, h);
+    let dataUrl;
+    try {
+      dataUrl = canvas.toDataURL('image/webp', quality == null ? 0.72 : quality);
+      // 浏览器不支持 webp 编码时会回退成 png
+      if (!/^data:image\/(webp|png)/.test(dataUrl)) dataUrl = canvas.toDataURL('image/png');
+    } catch (_) {
+      return null;
+    }
+    return { dataUrl, w, h };
+  }
+
+  function readBlobAsDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(fr.result);
+      fr.onerror = () => reject(new Error('读取失败'));
+      fr.readAsDataURL(blob);
+    });
+  }
+
+  /** 通道 A：元素已经在页面上渲染过 —— 直接拿它的像素，零网络 */
+  async function thumbFromElement(url, maxSide, quality) {
+    const el = elementsByUrl.get(url);
+    if (!el || !el.isConnected) return null;
+    try {
+      if (el.tagName === 'IMG') {
+        // 懒加载的图可能还没解码：decode() 复用同一次网络请求（通常已在缓存里）
+        if (el.naturalWidth === 0 && el.src) {
+          try {
+            await el.decode();
+          } catch (_) {
+            /* 解码失败则走后面的兜底 */
+          }
+        }
+        if (el.naturalWidth > 0) {
+          return downsample(el, el.naturalWidth, el.naturalHeight, maxSide, quality);
+        }
+        // 元素还没真正加载（src 是占位符等）：用同地址另开一个 Image
+        const u = el.currentSrc || el.src;
+        if (u) {
+          const off = await loadImageElement(u);
+          if (off) return downsample(off, off.naturalWidth, off.naturalHeight, maxSide, quality);
+        }
+      }
+      if (el.tagName === 'VIDEO' && el.videoWidth > 0) {
+        return downsample(el, el.videoWidth, el.videoHeight, maxSide, quality);
+      }
+      if (el.tagName === 'CANVAS' && el.width > 0) {
+        return downsample(el, el.width, el.height, maxSide, quality);
+      }
+    } catch (_) {
+      /* 跨域污染等情况：交给下面的 fetch 通道 */
+    }
+    return null;
+  }
+
+  /** 离屏 <img> 加载：与页面 <img> 共享同一份 HTTP 缓存，不额外下载 */
+  function loadImageElement(url, timeoutMs) {
+    return new Promise((resolve) => {
+      const im = new Image();
+      let done = false;
+      const finish = (v) => {
+        if (done) return;
+        done = true;
+        resolve(v);
+      };
+      im.onload = () => finish(im.naturalWidth > 0 ? im : null);
+      im.onerror = () => finish(null);
+      im.decoding = 'async';
+      im.src = url;
+      setTimeout(() => finish(null), timeoutMs || 8000);
+    });
+  }
+
+  async function thumbFromFetch(url, maxSide, quality) {
+    // cache: 'force-cache' 让浏览器优先用已有副本；页面分区下基本等于零流量
+    const res = await fetch(url, { credentials: 'include', cache: 'force-cache' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const blob = await res.blob();
+    if (!blob.size) throw new Error('内容为空');
+    const type = (blob.type || '').toLowerCase();
+
+    // SVG 无法可靠地用 canvas 采样（且通常很小），直接返回原数据
+    if (/svg/.test(type) || blob.size < 3000) {
+      return { dataUrl: await readBlobAsDataUrl(blob), passthrough: true, size: blob.size };
+    }
+
+    let bmp = null;
+    try {
+      bmp = await createImageBitmap(blob);
+    } catch (_) {
+      bmp = null;
+    }
+
+    if (bmp) {
+      const out = downsample(bmp, bmp.width, bmp.height, maxSide, quality);
+      try {
+        bmp.close();
+      } catch (_) {
+        /* ignore */
+      }
+      if (out) {
+        out.srcBytes = blob.size;
+        return out;
+      }
+    }
+
+    // createImageBitmap 解不了（部分 HEIC/AVIF 变体）时，退回 <img> 解码：
+    // <img> 的解码器覆盖面比 createImageBitmap 更广，通常还能拿到像素。
+    try {
+      const objUrl = URL.createObjectURL(blob);
+      const im = await loadImageElement(objUrl);
+      if (im && im.naturalWidth > 0) {
+        const out = downsample(im, im.naturalWidth, im.naturalHeight, maxSide, quality);
+        URL.revokeObjectURL(objUrl);
+        if (out) {
+          out.srcBytes = blob.size;
+          return out;
+        }
+      } else {
+        URL.revokeObjectURL(objUrl);
+      }
+    } catch (_) {
+      /* 继续走原样返回 */
+    }
+
+    // 最后兜底：原样返回字节（弹窗里 <img> 也许能显示，只是不降采样）
+    return { dataUrl: await readBlobAsDataUrl(blob), passthrough: true, size: blob.size };
+  }
+
+  async function makeThumb(msg) {
+    const url = msg && msg.url;
+    if (!url) return { ok: false, error: '缺少地址' };
+    const maxSide = Math.max(64, Math.min(512, msg.maxSide || 256));
+    const quality = typeof msg.quality === 'number' ? msg.quality : 0.72;
+    const key = url + '|' + maxSide;
+    const hit = thumbMemo.get(key);
+    if (hit) return { ok: true, dataUrl: hit, cached: true };
+
+    // 1) 页面上已经渲染出来的图：直接读像素，零网络
+    const direct = await thumbFromElement(url, maxSide, quality);
+    if (direct && direct.dataUrl) {
+      if (thumbMemo.size > 400) thumbMemo.clear();
+      thumbMemo.set(key, direct.dataUrl);
+      return { ok: true, dataUrl: direct.dataUrl, w: direct.w, h: direct.h, via: 'element' };
+    }
+
+    // 2) 走页面分区的 HTTP 缓存
+    if (/^(https?|blob):/i.test(url)) {
+      try {
+        const fetched = await thumbFromFetch(url, maxSide, quality);
+        if (fetched && fetched.dataUrl) {
+          if (!fetched.passthrough) {
+            if (thumbMemo.size > 400) thumbMemo.clear();
+            thumbMemo.set(key, fetched.dataUrl);
+          }
+          return {
+            ok: true,
+            dataUrl: fetched.dataUrl,
+            w: fetched.w,
+            h: fetched.h,
+            passthrough: !!fetched.passthrough,
+            via: 'page-cache'
+          };
+        }
+      } catch (e) {
+        // 页面里拿不到（被 CSP / CORS 拦）：交给后台的 offscreen 通道再试
+        return { ok: false, error: String((e && e.message) || e), retryInBackground: true };
+      }
+    }
+
+    // 3) data: 地址本来就没有网络开销，直接返回
+    if (/^data:/i.test(url)) {
+      return { ok: true, dataUrl: url, passthrough: true, via: 'inline' };
+    }
+
+    return { ok: false, error: '无法在页面内生成缩略图' };
   }
 
   function blobToDataUrl(url) {
@@ -878,6 +1242,7 @@
     canvasSnapshot,
     videoFrame,
     blobToDataUrl,
+    makeThumb,
     highlight,
     elementRect,
     count: async () => (await collect({ deep: false, budgetMs: 80 })).items.length
@@ -902,6 +1267,9 @@
         return false;
       case 'IGP_BLOB':
         blobToDataUrl(msg.url).then(sendResponse);
+        return true;
+      case 'IGP_PAGE_THUMB':
+        makeThumb(msg).then(sendResponse);
         return true;
       case 'IGP_HIGHLIGHT':
         sendResponse(highlight(msg.url));

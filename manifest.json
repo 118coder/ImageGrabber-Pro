@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "图集捕手 Image Grabber Pro",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "高性能网页图片提取与批量下载：懒加载、srcset、CSS 背景、blob、Canvas、iframe、防盗链站点通吃。",
   "minimum_chrome_version": "110",
   "icons": {

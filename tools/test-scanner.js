@@ -86,7 +86,13 @@ function item(list, fragment) {
 
   console.log('\n[2] srcset 取最大');
   check('srcset 里 1600w 的那张', has(items, 'big-1600.jpg'));
-  check('没有误加 400w 的小图', !has(items, 'small-400.jpg'));
+  // 行为变更（1.5.0）：srcset 的每一档都作为候选列出，用户才可能下到原图。
+  // 小图不靠"不采集"来隐藏，而是靠界面的尺寸过滤，所以这里断言"已采集"。
+  check('srcset 的小图也列出（供原图选择）', has(items, 'small-400.jpg'), items.filter((i) => i.url.includes('small-400')).length);
+  check('srcset 小图被标记为带宽度信息', (() => {
+    const it = item(items, 'small-400.jpg');
+    return it && it.kind === 'srcset' && it.w === 400;
+  })(), item(items, 'small-400.jpg'));
   check('src 兜底图也在列表里', has(items, 'fallback.jpg'));
   check('picture > source 的 2x 被选中', has(items, 'pic-a@2x.webp'), items.filter((i) => i.url.includes('pic-a')).map((i) => i.url));
   check('picture 里的 img 兜底图也收了', has(items, 'pic-fallback.jpg'));
@@ -186,6 +192,39 @@ function item(list, fragment) {
     window.document.head.appendChild(again);
     again.remove();
     check('同版本重复注入仍然跳过（不重复初始化）', window.__IGP__ === same, null);
+  }
+
+  console.log('\n[10.6] 1.5.0 新通道：srcset 多分辨率与 URL 变体推导');
+  {
+    // srcset 的每一档都该出现（用户可能要原图，而不是当前这一档）
+    check('srcset 每一档都被采集', has(items, 'small-400.jpg') && has(items, 'big-1600.jpg'), {
+      '400w': has(items, 'small-400.jpg'),
+      '1600w': has(items, 'big-1600.jpg')
+    });
+    const it400 = item(items, 'small-400.jpg');
+    check('srcset 条目带宽度信息', it400 && it400.kind === 'srcset' && it400.w === 400, it400 && { kind: it400.kind, w: it400.w });
+
+    // URL 变体推导：追加到 DOM 后重扫，确认能推出原图候选
+    const host = window.document.createElement('div');
+    host.innerHTML =
+      '<img src="/v/photo_thumb.jpg">' +
+      '<img src="/v/photo-300x200.jpg">' +
+      '<img src="/thumb/pic.jpg">' +
+      '<img src="/v/normal-photo.jpg">' +
+      '<img src="/v/cat.jpg?w=300&h=200">';
+    window.document.body.appendChild(host);
+    const vres = await window.__IGP__.collect({ deep: false, budgetMs: 200 });
+    const vItems = vres.items;
+    check('去缩略后缀：photo_thumb → photo', has(vItems, '/v/photo.jpg'), vItems.filter((i) => i.url.includes('/v/photo')).map((i) => i.url));
+    check('去尺寸后缀：photo-300x200 → photo', has(vItems, '/v/photo.jpg'));
+    check('去缩略目录：/thumb/pic → /pic', has(vItems, '/pic.jpg'), vItems.filter((i) => /\/pic\.jpg$/.test(i.url)).map((i) => i.url));
+    check('去查询串尺寸：cat.jpg?w=300&h=200 → cat.jpg', has(vItems, '/v/cat.jpg'), vItems.filter((i) => i.url.includes('/v/cat')).map((i) => i.url));
+    check('不像缩略图的地址不被误改', !has(vItems, '/v/normal-photo.jpg') === false && !has(vItems, '/v/normal.j'), vItems.filter((i) => i.url.includes('normal')).map((i) => i.url));
+    check('推导出的变体标记为"疑似"', (() => {
+      const v = item(vItems, '/v/photo.jpg');
+      return v && v.probable === true;
+    })(), item(vItems, '/v/photo.jpg'));
+    host.remove();
   }
 
   console.log('\n[11] 用真实 cssText 验证样式表解析（jsdom 的 CSSOM 太弱，这里换成合成样式表）');
