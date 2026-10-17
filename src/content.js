@@ -987,6 +987,51 @@
   }
 
   /** 把已经解码好的图像源（img/canvas/bitmap）降采样成 WebP dataURL */
+  /**
+   * 从已解码的 <img> 生成缩略图。
+   * 优先用 createImageBitmap(img, {resizeWidth, resizeHeight})：让解码器直接输出目标尺寸，
+   * 省掉"整张大图先画进 canvas 再缩放"的那一步（对大图尤其明显）。
+   * 不支持时退回普通 downsample。
+   */
+  async function downsampleImageElement(img, maxSide, quality) {
+    const srcW = img.naturalWidth;
+    const srcH = img.naturalHeight;
+    if (!srcW || !srcH) return null;
+    const scale = Math.min(1, maxSide / Math.max(srcW, srcH));
+    const w = Math.max(1, Math.round(srcW * scale));
+    const h = Math.max(1, Math.round(srcH * scale));
+
+    // 只缩小不放大：原图本来就小的时候没必要走位图缩放
+    if (scale < 0.98 && typeof createImageBitmap === 'function') {
+      try {
+        const bmp = await createImageBitmap(img, {
+          resizeWidth: w,
+          resizeHeight: h,
+          resizeQuality: 'high'
+        });
+        const canvas = makeCanvas(w, h);
+        canvas.getContext('2d', { alpha: true }).drawImage(bmp, 0, 0);
+        try {
+          bmp.close();
+        } catch (_) {
+          /* ignore */
+        }
+        let dataUrl = '';
+        try {
+          dataUrl = canvas.toDataURL('image/webp', quality == null ? 0.72 : quality);
+          if (!/^data:image\/(webp|png)/.test(dataUrl)) dataUrl = canvas.toDataURL('image/png');
+        } catch (_) {
+          return null;
+        }
+        return { dataUrl, w, h };
+      } catch (_) {
+        /* 跨域/不支持：走下面的普通路径 */
+      }
+    }
+    return downsample(img, srcW, srcH, maxSide, quality);
+  }
+
+  /** 把已经解码好的图像源（img/canvas/bitmap）降采样成 WebP dataURL */
   function downsample(source, srcW, srcH, maxSide, quality) {
     const scale = Math.min(1, maxSide / Math.max(srcW, srcH));
     const w = Math.max(1, Math.round(srcW * scale));
@@ -1031,13 +1076,13 @@
           }
         }
         if (el.naturalWidth > 0) {
-          return downsample(el, el.naturalWidth, el.naturalHeight, maxSide, quality);
+          return downsampleImageElement(el, maxSide, quality);
         }
         // 元素还没真正加载（src 是占位符等）：用同地址另开一个 Image
         const u = el.currentSrc || el.src;
         if (u) {
           const off = await loadImageElement(u);
-          if (off) return downsample(off, off.naturalWidth, off.naturalHeight, maxSide, quality);
+          if (off) return downsampleImageElement(off, maxSide, quality);
         }
       }
       if (el.tagName === 'VIDEO' && el.videoWidth > 0) {

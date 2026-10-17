@@ -439,11 +439,11 @@ function loadThumb(img) {
   img.dataset.started = '1';
 
   // 先注册失败处理：下面可能先设直连 src 再异步换图，
-  // 监听器必须在此之前挂好，否则 404 的 error 事件会被漏掉（此前这段是死代码）。
+  // 监听器必须在此之前挂好，否则 404 的 error 事件会被漏掉。
   img.addEventListener(
     'error',
     () => {
-      if (!img.dataset.fallbackShown) {
+      if (!img.dataset.fallbackShown && img.isConnected) {
         markThumbBroken(url, 'load-failed');
         showThumbFallback(img);
       }
@@ -451,12 +451,14 @@ function loadThumb(img) {
     { once: true }
   );
 
-  // 一律走后台：它优先读页面已加载图片的像素（零流量），失败才回退重新下载。
   const maxSide = thumbRequestSide();
   return sendBg({ type: 'IGP_THUMB', url, pageUrl, tabId, frameId: img.dataset.frameId, maxSide }).then((res) => {
+    // 关键：请求回来时元素可能已被"预览不可用"替换、或整个网格重建。
+    // 这时再写 src 只会白解码一次（滚动时大量在途请求同时回来 → 肉眼可见的刷新）。
+    if (!img.isConnected || img.dataset.fallbackShown) return;
+
     if (res && res.ok && res.dataUrl) {
       img.dataset.thumbSide = String(maxSide);
-      img.dataset.fallbackShown = '';
       img.src = res.dataUrl;
       return;
     }
@@ -464,7 +466,7 @@ function loadThumb(img) {
     img.dataset.retried = '1';
     img.src = url;
     setTimeout(() => {
-      if (!img.naturalWidth && !img.dataset.fallbackShown) {
+      if (img.isConnected && !img.naturalWidth && !img.dataset.fallbackShown) {
         markThumbBroken(url, 'no-response');
         showThumbFallback(img);
       }
@@ -492,10 +494,15 @@ function thumbRequestSide() {
 
 function showThumbFallback(img) {
   const host = img.parentElement;
-  if (!host) return;
+  if (!host || img.dataset.fallbackShown) return;
   img.dataset.fallbackShown = '1';
-  img.remove();
+
+  // 就地隐藏，而不是"移除 img 再插入两个新节点"：
+  // 后者会改变网格布局，滚动时连续触发就会看到整片跳动。
+  img.style.display = 'none';
   if (host.querySelector('.ph')) return;
+
+  // .thumb 本身是 position:relative 且有固定高度，占位层绝对定位不参与布局
   const ph = document.createElement('div');
   ph.className = 'ph';
   ph.textContent = '🚫';
