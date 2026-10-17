@@ -1,7 +1,7 @@
 /* =============================================================================
  * 颜色令牌
- * 所有颜色都走变量，主题只需改这一层。深浅两套都在这里定义，
- * 由 <html data-theme="light|dark"> 切换；不设置时跟随系统。
+ * 所有颜色都走变量，主题只需改这一层。
+ * 默认是浅色（纯白），`:root[data-theme='dark']` 覆盖成深色。
  * ============================================================================= */
 :root {
   /* 主色不随主题变化 */
@@ -17,7 +17,47 @@
   --thumb-h: 116px;
   --card-min: 118px;
 
-  /* ---- 深色（默认） ---- */
+  /* ---- 浅色（默认，纯白底） ---- */
+  --bg: #ffffff;
+  --bg-soft: #f4f6fa;
+  --bg-card: #ffffff;
+  --line: #dfe3ec;
+  --line-strong: #b9c1d4;
+  --line-hover: #c3cadb;
+  --fg: #12151f;
+  --fg-dim: #5f6779;
+
+  --bar-bg: linear-gradient(180deg, #ffffff, #f6f8fc);
+  --bar-bg-bottom: linear-gradient(0deg, #f6f8fc, #ffffff);
+
+  --thumb-bg-a: #eef1f7;
+  --thumb-bg-b: #e6eaf3;
+  --scroll-thumb: #c8cfdd;
+  --track: #e6eaf3;
+  /* toast 两套主题都用深底白字，白底上更醒目 */
+  --toast-bg: #1f2537;
+
+  --accent-text: #4338ca;
+  --accent-text-strong: #3730a3;
+  --link: #4f46e5;
+  --btn-fg: #1e2a5a;
+
+  /* 卡片上的浮层始终是深色半透明，两套主题一致 */
+  --overlay: rgba(10, 12, 18, 0.75);
+  --overlay-strong: rgba(8, 10, 16, 0.86);
+  --overlay-fg: #cbd5e1;
+
+  /* 类型标签 */
+  --tag-css: #047857;
+  --tag-visual: #b91c1c;
+  --tag-vector: #a16207;
+  --tag-susp: #c2410c;
+
+  --shadow: 0 8px 26px rgba(15, 23, 42, 0.18);
+}
+
+/* 深色主题（可选） */
+:root[data-theme='dark'] {
   --bg: #0f1117;
   --bg-soft: #161a24;
   --bg-card: #1b2030;
@@ -36,18 +76,15 @@
   --track: #20263a;
   --toast-bg: #1f2537;
 
-  /* 强调文字（浅底上是深色，深底上是淡紫） */
   --accent-text: #c7d2fe;
   --accent-text-strong: #e0e7ff;
   --link: #a5b4fc;
   --btn-fg: #dbeafe;
 
-  /* 卡片上的浮层（始终是深色半透明，深色主题下不变） */
   --overlay: rgba(10, 12, 18, 0.75);
   --overlay-strong: rgba(8, 10, 16, 0.86);
   --overlay-fg: #cbd5e1;
 
-  /* 类型标签 */
   --tag-css: #a7f3d0;
   --tag-visual: #fca5a5;
   --tag-vector: #fcd34d;
@@ -56,46 +93,12 @@
   --shadow: 0 8px 26px rgba(0, 0, 0, 0.5);
 }
 
-/* 浅色主题：纯白底，方便辨识深色图片 */
-:root[data-theme='light'] {
-  --bg: #ffffff;
-  --bg-soft: #f4f6fa;
-  --bg-card: #ffffff;
-  --line: #dfe3ec;
-  --line-strong: #b9c1d4;
-  --line-hover: #c3cadb;
-  --fg: #12151f;
-  --fg-dim: #5f6779;
-
-  --bar-bg: linear-gradient(180deg, #ffffff, #f6f8fc);
-  --bar-bg-bottom: linear-gradient(0deg, #f6f8fc, #ffffff);
-
-  --thumb-bg-a: #eef1f7;
-  --thumb-bg-b: #e6eaf3;
-  --scroll-thumb: #c8cfdd;
-  --track: #e6eaf3;
-  --toast-bg: #1f2537; /* toast 保留深底，白字更醒目 */
-
-  --accent-text: #4338ca;
-  --accent-text-strong: #3730a3;
-  --link: #4f46e5;
-  --btn-fg: #1e2a5a;
-
-  --tag-css: #047857;
-  --tag-visual: #b91c1c;
-  --tag-vector: #a16207;
-  --tag-susp: #c2410c;
-
-  --shadow: 0 8px 26px rgba(15, 23, 42, 0.18);
-}
-
-/* 浅色主题下，卡片缩略图区用浅灰棋盘格，深色图片一眼可辨 */
-:root[data-theme='light'] .thumb {
+/* 缩略图区棋盘格：深色图片在浅底上一眼可辨 */
+.thumb {
   background: repeating-conic-gradient(var(--thumb-bg-a) 0% 25%, var(--thumb-bg-b) 0% 50%) 50% / 14px 14px;
 }
 
-/* toast 在两套主题下都用深底白字 */
-:root[data-theme='light'] .toast {
+.toast {
   color: #f1f5f9;
 }
 

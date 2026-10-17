@@ -14,7 +14,7 @@ let pageUrl = '';
 let handoffId = new URLSearchParams(location.search).get('id') || '';
 let settings = {};
 
-const state = { q: '', minSize: 120, typeFilter: 'all', sort: 'area', susp: false, thumbSize: 116, hideBroken: false, theme: 'dark' };
+const state = { q: '', minSize: 120, typeFilter: 'all', sort: 'area', susp: false, thumbSize: 116, hideBroken: false, theme: 'light' };
 
 /** 预览失败的条目（url → 原因），供"隐藏失效"筛选 */
 const brokenThumbs = new Map();
@@ -389,7 +389,7 @@ const THEME_ICONS = {
 };
 
 function applyTheme(theme, opts) {
-  const t = theme === 'light' ? 'light' : 'dark';
+  const t = theme === 'dark' ? 'dark' : 'light';
   state.theme = t;
   document.documentElement.dataset.theme = t;
   const ic = $('themeIcon');
@@ -422,7 +422,7 @@ $('q').addEventListener('input', () => onFilter(false));
   const ui = got.uiState || {};
   state.thumbSize = ui.thumbSize || 116;
   state.hideBroken = !!ui.hideBroken;
-  state.theme = ui.theme === 'light' ? 'light' : 'dark';
+  state.theme = ui.theme === 'dark' ? 'dark' : 'light';
   applyThumbSize(state.thumbSize);
   applyTheme(state.theme, { persist: false });
   if ($('hideBroken')) $('hideBroken').checked = state.hideBroken;

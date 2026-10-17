@@ -171,9 +171,10 @@ function contrast(fg, bg) {
     console.log('    ', JSON.stringify(base));
     check('扫到 6 张以上（含 favicon）', base.allItems >= 6, base);
     check('至少有 1 张预览失败（用于测试筛选）', base.broken >= 1, base);
-    check('默认主题是深色', base.theme === 'dark', base.theme);
+    // 1.0.0 起默认是浅色：纯白底更利于辨识深色图片
+    check('默认主题是浅色', base.theme === 'light', base.theme);
 
-    console.log('\n[2] 深色主题的实际颜色');
+    console.log('\n[2] 默认（浅色）下的实际颜色');
     const dark = await pop.ev(`
       const body = getComputedStyle(document.body);
       const card = document.querySelector('.card');
@@ -183,11 +184,23 @@ function contrast(fg, bg) {
                emptyBg: getComputedStyle(document.getElementById('text')||document.body).backgroundColor,
                dataTheme: document.documentElement.dataset.theme };`);
     console.log('    ', JSON.stringify(dark));
-    check('data-theme 标记为 dark', dark.dataTheme === 'dark', dark);
-    check('深色主题下页面背景是深色', isDark(dark.bodyBg), dark.bodyBg);
-    check('深色主题下文字是浅色', isLight(dark.bodyFg), dark.bodyFg);
+    check('data-theme 标记为 light', dark.dataTheme === 'light', dark);
+    check('默认背景是纯白', isWhite(dark.bodyBg), dark.bodyBg);
+    check('默认文字是深色', isDark(dark.bodyFg), dark.bodyFg);
+    check('默认对比度达到 WCAG AA（≥ 4.5）', contrast(dark.bodyFg, dark.bodyBg) >= 4.5, contrast(dark.bodyFg, dark.bodyBg).toFixed(2));
 
-    console.log('\n[3] 切到浅色主题');
+    console.log('\n[2b] 手动切到深色主题');
+    const darkTheme = await pop.ev(`
+      applyTheme('dark');
+      await new Promise(r => setTimeout(r, 500));
+      const body = getComputedStyle(document.body);
+      return { bodyBg: body.backgroundColor, bodyFg: body.color,
+               dataTheme: document.documentElement.dataset.theme };`);
+    console.log('    ', JSON.stringify(darkTheme));
+    check('能切到深色', darkTheme.dataTheme === 'dark' && isDark(darkTheme.bodyBg), darkTheme);
+    check('深色下文字是浅色', isLight(darkTheme.bodyFg), darkTheme.bodyFg);
+
+    console.log('\n[3] 切回浅色主题');
     const light = await pop.ev(`
       const imgsBefore = [...document.querySelectorAll('.thumb img')];
       const srcBefore = imgsBefore.map(i => i.getAttribute('src'));
