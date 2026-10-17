@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>Image Grabber Pro • offscreen</title>
+  </head>
+  <body>
+    <!--
+      这个页面永远不可见，只用来做 service worker 做不了的事：
+      1) URL.createObjectURL —— MV3 的 service worker 里没有这个 API
+      2) 带 host 权限的跨域 fetch（不受 CORS 限制，可带 Cookie）
+      3) 把一堆图片打包成 ZIP
+    -->
+    <script src="offscreen.js"></script>
+  </body>
+</html>

@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>图集捕手 · 页面图库</title>
+    <link rel="stylesheet" href="popup.css" />
+    <link rel="stylesheet" href="viewer.css" />
+  </head>
+  <body class="viewer">
+    <header class="bar">
+      <div class="brand">
+        <span class="logo"></span>
+        <span class="title">页面图库</span>
+        <span class="chip" id="count">0</span>
+        <span class="hint" id="pageInfo"></span>
+      </div>
+      <div class="bar-actions">
+        <button class="icon-btn" id="rescan" title="重新扫描来源页面">
+          <svg viewBox="0 0 24 24"><path d="M12 5V2L7 6l5 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg>
+        </button>
+        <button class="icon-btn" id="options" title="设置">
+          <svg viewBox="0 0 24 24"><path d="M12 15.5A3.5 3.5 0 1 1 15.5 12 3.5 3.5 0 0 1 12 15.5zm7.4-3.5a7.5 7.5 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7.6 7.6 0 0 0-2-1.2L14.5 3h-5l-.4 2.6a7.6 7.6 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6a7.5 7.5 0 0 0 0 2.4l-2 1.6 2 3.4 2.4-1a7.6 7.6 0 0 0 2 1.2L9.5 21h5l.4-2.6a7.6 7.6 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6a7.5 7.5 0 0 0 .1-1.2z"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <section class="tools">
+      <input type="search" id="q" placeholder="搜索文件名 / 地址 / alt…" />
+      <select id="minSize">
+        <option value="0">全部尺寸</option>
+        <option value="120" selected>≥ 120px</option>
+        <option value="300">≥ 300px</option>
+        <option value="800">≥ 800px</option>
+        <option value="1600">≥ 1600px</option>
+      </select>
+      <select id="typeFilter">
+        <option value="all">全部类型</option>
+        <option value="photo">普通图片</option>
+        <option value="css">背景图</option>
+        <option value="visual">Canvas / 视频</option>
+        <option value="vector">内联 SVG</option>
+      </select>
+      <select id="sort">
+        <option value="area">按面积排序</option>
+        <option value="w">按宽度排序</option>
+        <option value="kind">按类型排序</option>
+      </select>
+      <label class="mini-toggle"><input type="checkbox" id="susp" /><span>疑似</span></label>
+      <label class="mini-toggle" title="隐藏缩略图加载失败的图片（通常是页面引用的地址已失效）">
+        <input type="checkbox" id="hideBroken" /><span>隐藏失效</span>
+      </label>
+      <button class="icon-btn" id="theme" title="切换浅色 / 深色主题">
+        <svg viewBox="0 0 24 24" id="themeIcon"></svg>
+      </button>
+      <label class="sizer" title="调整缩略图大小（只影响显示，不重新加载图片）">
+        <span>大小</span>
+        <input type="range" id="thumbSize" min="72" max="260" step="4" value="116" />
+        <span class="sizer-val" id="thumbSizeVal">116</span>
+      </label>
+    </section>
+
+    <section class="subbar">
+      <button class="link-btn" id="selAll">全选</button>
+      <button class="link-btn" id="selNone">清空</button>
+      <button class="link-btn" id="selInvert">反选</button>
+      <button class="link-btn" id="selBig">仅选大图 ≥800</button>
+      <span class="grow"></span>
+      <button class="link-btn" id="openSrc">打开来源页面</button>
+    </section>
+
+    <main id="grid" class="grid"></main>
+    <div class="empty" id="empty" hidden><div class="empty-ico">🔍</div><p>没有图片。</p></div>
+
+    <footer class="bar bottom">
+      <div class="progress-wrap" id="progressWrap" hidden>
+        <div class="progress"><div class="progress-inner" id="progressBar"></div></div>
+        <span id="progressText">0/0</span>
+      </div>
+      <div class="footer-actions">
+        <span class="stat" id="stat">已选 0 张</span>
+        <button class="btn ghost" id="zip">打包 ZIP</button>
+        <button class="btn ghost" id="dlAll">全部下载</button>
+        <button class="btn primary" id="dlSel" disabled>下载选中</button>
+      </div>
+    </footer>
+    <div class="toast" id="toast" hidden></div>
+    <script src="viewer.js"></script>
+  </body>
+</html>

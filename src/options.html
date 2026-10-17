@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>图集捕手 · 设置</title>
+    <style>
+      :root {
+        --bg: #0f1117;
+        --card: #181d2a;
+        --line: #262c3d;
+        --fg: #e8ecf5;
+        --dim: #8b93a7;
+        --accent: #6366f1;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font: 14px/1.6 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+        padding: 28px 20px 60px;
+      }
+      .wrap { max-width: 760px; margin: 0 auto; }
+      h1 { font-size: 20px; margin: 0 0 4px; display: flex; align-items: center; gap: 10px; }
+      .logo { width: 22px; height: 22px; border-radius: 6px; background: linear-gradient(135deg, #6366f1, #22d3ee); }
+      .sub { color: var(--dim); font-size: 13px; margin: 0 0 22px; }
+      .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; margin-bottom: 16px; }
+      .card h2 { font-size: 14px; margin: 0 0 14px; color: #c7d2fe; letter-spacing: 0.4px; }
+      .row { display: flex; align-items: center; gap: 14px; padding: 8px 0; border-bottom: 1px dashed #232a3c; }
+      .row:last-child { border-bottom: none; }
+      .row .label { flex: 0 0 210px; }
+      .row .label small { display: block; color: var(--dim); font-size: 12px; font-weight: 400; }
+      .row .ctrl { flex: 1 1 auto; display: flex; align-items: center; gap: 10px; }
+      input[type="text"], input[type="number"], select {
+        background: #12161f; border: 1px solid var(--line); color: var(--fg);
+        border-radius: 8px; padding: 7px 10px; font-size: 13px; outline: none; min-width: 90px;
+      }
+      input[type="text"] { flex: 1 1 auto; }
+      input:focus, select:focus { border-color: var(--accent); }
+      input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); }
+      .switch { display: inline-flex; align-items: center; gap: 8px; color: var(--dim); font-size: 13px; }
+      code { background: #12161f; border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; font-size: 12px; color: #a5b4fc; }
+      .actions { display: flex; gap: 10px; align-items: center; margin-top: 8px; }
+      button {
+        border-radius: 9px; padding: 9px 18px; font-size: 13px; cursor: pointer;
+        border: 1px solid var(--line); background: #1c2233; color: var(--fg);
+      }
+      button.primary { background: linear-gradient(135deg, #6366f1, #4f46e5); border-color: transparent; font-weight: 600; }
+      button:hover { border-color: #4b5675; }
+      .saved { color: #4ade80; font-size: 13px; opacity: 0; transition: opacity 0.25s; }
+      .saved.show { opacity: 1; }
+      .vars { color: var(--dim); font-size: 12px; margin-top: 6px; }
+      .tips { color: var(--dim); font-size: 12.5px; }
+      .tips li { margin-bottom: 4px; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1><span class="logo"></span>图集捕手 · 设置</h1>
+      <p class="sub">默认值会同时作用于弹窗扫描和右键菜单的批量下载。</p>
+
+      <div class="card">
+        <h2>抓取能力</h2>
+        <div class="row">
+          <div class="label">深度扫描<small>遍历所有元素的属性，挖出懒加载 / 混淆地址</small></div>
+          <div class="ctrl"><label class="switch"><input type="checkbox" id="deepScan" /> 开启（推荐）</label></div>
+        </div>
+        <div class="row">
+          <div class="label">彻底模式<small>逐元素读取 computedStyle，能挖出纯 CSS 背景图，稍慢</small></div>
+          <div class="ctrl"><label class="switch"><input type="checkbox" id="thoroughScan" /> 开启</label></div>
+        </div>
+        <div class="row">
+          <div class="label">解析内联脚本<small>从页面脚本文本里提取图片地址（图集站常用）</small></div>
+          <div class="ctrl"><label class="switch"><input type="checkbox" id="scriptScan" /> 开启（推荐）</label></div>
+        </div>
+        <div class="row">
+          <div class="label">防盗链兼容<small>抓取时把 Referer 伪装成来源页，破图片防盗链</small></div>
+          <div class="ctrl"><label class="switch"><input type="checkbox" id="hotlinkBypass" /> 开启（推荐）</label></div>
+        </div>
+        <div class="row">
+          <div class="label">先用扩展抓取<small>先带 Cookie 抓成 blob 再保存；失败自动退回直连</small></div>
+          <div class="ctrl"><label class="switch"><input type="checkbox" id="fetchFirst" /> 开启（兼容性最好）</label></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>筛选默认值</h2>
+        <div class="row">
+          <div class="label">最小宽度 / 高度<small>0 表示不过滤；尺寸未知的图片不受影响</small></div>
+          <div class="ctrl">
+            <input type="number" id="minWidth" min="0" max="10000" step="10" /> ×
+            <input type="number" id="minHeight" min="0" max="10000" step="10" /> px
+          </div>
+        </div>
+        <div class="row">
+          <div class="label">包含疑似图片<small>地址里没有扩展名但很可能是图片的条目</small></div>
+          <div class="ctrl"><label class="switch"><input type="checkbox" id="includeProbable" /> 包含</label></div>
+        </div>
+        <div class="row">
+          <div class="label">包含 1×1 像素<small>统计埋点用的透明像素，通常没意义</small></div>
+          <div class="ctrl"><label class="switch"><input type="checkbox" id="includeTiny" /> 包含</label></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>保存位置与命名</h2>
+        <div class="row">
+          <div class="label">目录模板<small>支持 {host} {date}</small></div>
+          <div class="ctrl"><input type="text" id="folderTemplate" placeholder="图集捕手/{host}" /></div>
+        </div>
+        <div class="row">
+          <div class="label">文件名模板</div>
+          <div class="ctrl"><input type="text" id="nameTemplate" placeholder="{name}" /></div>
+        </div>
+        <div class="row">
+          <div class="label">并发数<small>同时下载几张，建议 3~6</small></div>
+          <div class="ctrl"><input type="number" id="concurrency" min="1" max="12" step="1" /></div>
+        </div>
+        <div class="vars">
+          可用变量：<code>{name}</code> <code>{ext}</code> <code>{index}</code> <code>{w}</code> <code>{h}</code>
+          <code>{size}</code> <code>{alt}</code> <code>{host}</code> <code>{date}</code> <code>{kind}</code>
+          <br />例：<code>{host}_{index}_{w}x{h}</code> → <code>example.com_03_1920x1080.jpg</code>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="primary" id="save">保存设置</button>
+        <button id="reset">恢复默认</button>
+        <span class="saved" id="saved">✓ 已保存</span>
+      </div>
+
+      <div class="card" style="margin-top: 20px">
+        <h2>为什么它能抓到"加密"页面里的图</h2>
+        <ul class="tips">
+          <li><b>禁止右键 / 禁止选中</b>：扫描完全在扩展层做，绕过页面的事件拦截。</li>
+          <li><b>懒加载、滚动才出现</b>：直接读元素的全部属性（<code>data-src</code>、<code>data-original</code>…），不需要它真的加载出来。</li>
+          <li><b>地址混淆、转义、无扩展名</b>：识别 <code>\/</code>、<code>\u002F</code> 等转义，并从内联脚本里正则提取地址。</li>
+          <li><b>blob: 地址</b>：交给页面上下文读取 blob 再转存，扩展拿得到文件本体。</li>
+          <li><b>Canvas 绘制 / 动态生成的图</b>：直接读画布像素；被跨域污染时改用"可见区域截图"导出。</li>
+          <li><b>防盗链（Referer 校验）</b>：下载时按需把 Referer 伪装成来源页，再带 Cookie 抓取。</li>
+          <li><b>iframe 里的图</b>：所有子框架一起扫描并合并结果。</li>
+        </ul>
+        <p class="tips" style="margin-top: 10px">
+          请只在你有权保存的内容上使用本工具，尊重网站的版权与使用条款。
+        </p>
+      </div>
+    </div>
+    <script src="options.js"></script>
+  </body>
+</html>

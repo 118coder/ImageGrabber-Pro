@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>抓取测试页</title>
+    <meta property="og:image" content="/og/share-cover.png" />
+    <meta name="twitter:image" content="https://cdn.example.com/twitter/card.jpg" />
+    <link rel="preload" as="image" href="https://cdn.example.com/preload/hero.avif" />
+    <link rel="icon" href="/favicon.ico" />
+    <style>
+      .hero {
+        background-image: url("https://cdn.example.com/css/hero-bg.jpg");
+        width: 1200px;
+        height: 600px;
+      }
+      .multi {
+        background-image: image-set(
+          url("https://cdn.example.com/css/set-1x.png") 1x,
+          url("https://cdn.example.com/css/set-2x.png") 2x
+        );
+      }
+      @media (min-width: 800px) {
+        .hero-mq {
+          background-image: url("/css/mq-banner.webp");
+        }
+      }
+      .pseudo::before {
+        content: url("/css/pseudo-icon.png");
+      }
+    </style>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "ImageGallery",
+        "image": [
+          "https:\/\/cdn.example.com\/gallery\/escaped-1.jpg",
+          "https:\/\/cdn.example.com\/gallery\/escaped-2.png"
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <h1>各种图片形态</h1>
+
+    <!-- 1. 最普通的图片 -->
+    <img src="/img/plain.jpg" alt="普通图" width="800" height="600" />
+
+    <!-- 2. 响应式 srcset：应该取最大的 1600w 那张 -->
+    <img
+      srcset="/img/small-400.jpg 400w, /img/mid-800.jpg 800w, /img/big-1600.jpg 1600w"
+      src="/img/fallback.jpg"
+      alt="响应式图"
+    />
+
+    <!-- 3. picture + source -->
+    <picture>
+      <source srcset="/img/pic-a.webp 1x, /img/pic-a@2x.webp 2x" type="image/webp" />
+      <img src="/img/pic-fallback.jpg" alt="picture 图" />
+    </picture>
+
+    <!-- 4. 懒加载的几种写法 -->
+    <img data-src="/img/lazy-data.jpg" />
+    <img data-original="/img/lazy-original.png" />
+    <img data-lazy-srcset="/img/lazy-srcset-sm.jpg 400w, /img/lazy-srcset-big.jpg 2000w" />
+    <div data-background-image="/img/div-bg.jpg"></div>
+    <div class="thumb" data-img="https://img.cdn.example.net/photo/9f1c8e77b2d4a6c3?w=1200"></div>
+
+    <!-- 5. 内联样式背景 -->
+    <div style="background-image: url('/img/inline-bg.png')"></div>
+    <div style="background: image-set(url('/img/inline-set-1x.jpg') 1x, url('/img/inline-set-2x.jpg') 2x)"></div>
+
+    <!-- 6. 视频封面 -->
+    <video poster="/video/poster.jpg"></video>
+
+    <!-- 7. 不该被抓到的链接 -->
+    <a href="/docs/manual.pdf">PDF</a>
+    <a href="/scripts/app.js">脚本</a>
+    <a href="/page/index.html">页面</a>
+    <a href="javascript:void(0)">假链接</a>
+    <!-- 8. 该被抓到的直链 -->
+    <a href="/gallery/full-size-image.jpeg">原图直链</a>
+
+    <!-- 9. SVG -->
+    <svg viewBox="0 0 200 150" xmlns="http://www.w3.org/2000/svg">
+      <image href="/svg/embedded.png" width="200" height="150" />
+      <rect width="200" height="150" fill="#123" />
+    </svg>
+    <svg width="240" height="180" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="grad-1" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#ff0055" />
+          <stop offset="100%" stop-color="#0055ff" />
+        </linearGradient>
+      </defs>
+      <rect width="240" height="180" rx="12" fill="url(#grad-1)" />
+      <circle cx="70" cy="70" r="46" fill="#ffffff" fill-opacity="0.85" />
+      <path d="M20 160 L90 90 L130 130 L200 60 L220 80 L220 170 Z" fill="#0f172a" />
+    </svg>
+
+    <!-- 10. 统计像素 / blob / data -->
+    <img src="https://s.example.com/pixel.gif" width="1" height="1" />
+    <img src="blob:https://www.example.com/7c1a-2b3d-4e5f" />
+    <img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" />
+
+    <!-- 11. Canvas -->
+    <canvas id="board" width="640" height="480"></canvas>
+
+    <!-- 12. 干扰项：非图片属性 -->
+    <div data-api="/api/v1/user/profile" data-href="/docs/readme.md" id="noise"></div>
+  </body>
+</html>

@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>图集捕手 · 安装完成</title>
+    <style>
+      :root { --bg:#0f1117; --card:#181d2a; --line:#262c3d; --fg:#e8ecf5; --dim:#8b93a7; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; background: radial-gradient(1000px 500px at 50% -10%, #1e2540, #0f1117 60%);
+        color: var(--fg); font: 14.5px/1.7 "Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+        min-height: 100vh; padding: 48px 20px;
+      }
+      .wrap { max-width: 780px; margin: 0 auto; }
+      .logo {
+        width: 56px; height: 56px; border-radius: 15px; margin-bottom: 18px;
+        background: linear-gradient(135deg, #6366f1, #22d3ee);
+        box-shadow: 0 12px 40px rgba(99,102,241,0.45);
+        display: grid; place-items: center; font-size: 28px;
+      }
+      h1 { font-size: 26px; margin: 0 0 8px; }
+      p.lead { color: var(--dim); margin: 0 0 28px; }
+      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+      .card { background: var(--card); border: 1px solid var(--line); border-radius: 13px; padding: 18px 20px; }
+      .card h3 { margin: 0 0 8px; font-size: 14.5px; color: #c7d2fe; }
+      .card p { margin: 0; color: var(--dim); font-size: 13px; }
+      kbd {
+        background: #12161f; border: 1px solid var(--line); border-bottom-width: 2px;
+        border-radius: 6px; padding: 1px 6px; font-size: 12px; color: #a5b4fc;
+      }
+      .steps { margin: 0; padding-left: 20px; color: var(--dim); font-size: 13.5px; }
+      .steps li { margin-bottom: 6px; }
+      .foot { margin-top: 26px; color: #5f6779; font-size: 12.5px; }
+      @media (max-width: 700px) { .grid { grid-template-columns: 1fr; } }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="logo">📥</div>
+      <h1>图集捕手已就绪</h1>
+      <p class="lead">在任意网页点工具栏图标（或按 <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd>），即可看到本页所有图片。</p>
+
+      <div class="grid">
+        <div class="card">
+          <h3>① 打开面板</h3>
+          <p>点扩展图标。图标上的数字就是本页识别到的图片数量，懒加载的图片滚动页面后会自动增加。</p>
+        </div>
+        <div class="card">
+          <h3>② 挑图</h3>
+          <p>按尺寸 / 类型 / 关键词过滤，点缩略图切换选中。鼠标悬停卡片可以用"下载 / 复制 / 定位 / 查看"。</p>
+        </div>
+        <div class="card">
+          <h3>③ 批量下载</h3>
+          <p>"下载选中"或"全部下载"并发保存到 <code>下载/图集捕手/站点域名/</code>；也可以"打包 ZIP"。</p>
+        </div>
+        <div class="card">
+          <h3>④ 抓不到的图</h3>
+          <p>勾上"深度 / 彻底"再扫一次；Canvas 与视频帧可以点"导出"，受保护时会自动改用可见区域截图。</p>
+        </div>
+      </div>
+
+      <h1 style="font-size:18px;margin:30px 0 10px">右键菜单</h1>
+      <ol class="steps">
+        <li>在图片上右键 → <b>用图集捕手下载这张图片</b>（最省事）</li>
+        <li>在空白处右键 → <b>提取本页所有图片（打开图库）</b>，用整页图库挑选</li>
+        <li>在空白处右键 → <b>直接下载本页全部图片</b>，不打开面板直接批量存</li>
+        <li>选中一段文字后右键 → 下载选区附近的图片</li>
+      </ol>
+
+      <p class="foot">
+        提示：首次批量下载时浏览器可能弹出"是否允许下载多个文件"，选择"允许"即可。
+        请仅保存你有权使用的内容。
+      </p>
+    </div>
+  </body>
+</html>

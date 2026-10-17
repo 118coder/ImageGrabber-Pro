@@ -1,0 +1,62 @@
+{
+  "manifest_version": 3,
+  "name": "图集捕手 Image Grabber Pro",
+  "version": "1.4.0",
+  "description": "高性能网页图片提取与批量下载：懒加载、srcset、CSS 背景、blob、Canvas、iframe、防盗链站点通吃。",
+  "minimum_chrome_version": "110",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "图集捕手：提取本页图片",
+    "default_popup": "src/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png"
+    }
+  },
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "options_page": "src/options.html",
+  "permissions": [
+    "scripting",
+    "downloads",
+    "storage",
+    "contextMenus",
+    "offscreen",
+    "clipboardWrite",
+    "declarativeNetRequestWithHostAccess"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*",
+    "file://*/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "src/content.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": true,
+      "match_about_blank": true
+    }
+  ],
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Alt+Shift+I"
+      },
+      "description": "打开图集捕手面板"
+    }
+  }
+}
