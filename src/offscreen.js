@@ -298,6 +298,9 @@ function sanitizeName(name) {
 }
 
 // ------------------------------------------------------------------ 缩略图生成
+// GIF 保留原始字节才能播放动画；超过上限则退回静态首帧，避免拖垮面板
+const GIF_PREVIEW_MAX = 6 * 1024 * 1024;
+
 /**
  * 把原图降采样成小尺寸 WebP，供弹窗/图库显示。
  * 这样列表里十几二十张图不会各自占几 MB 内存，也不必让 <img> 去解码原尺寸。
@@ -319,18 +322,25 @@ async function handleThumb(msg) {
     const blob = await res.blob();
     if (!blob.size) return { ok: false, error: '内容为空' };
     const type = (blob.type || '').toLowerCase();
+    const isGif = /gif/.test(type) || /\.gif(?:[?#]|$)/i.test(url);
+
+    // 小/中等 GIF 直接原样交给 <img>，保留动画
+    if (isGif && blob.size <= GIF_PREVIEW_MAX) {
+      const dataUrl = await blobToDataUrl(blob);
+      return { ok: true, dataUrl, passthrough: true, gif: true, size: blob.size, type };
+    }
 
     // SVG 用 createImageBitmap 解码不稳定，直接原样交给 <img>（本身很小、可缩放）
     if (/svg/.test(type) || blob.size < 3000) {
       const dataUrl = await blobToDataUrl(blob);
-      return { ok: true, dataUrl, passthrough: true, size: blob.size, type };
+      return { ok: true, dataUrl, passthrough: true, gif: isGif, size: blob.size, type };
     }
 
     const bmp = await createImageBitmap(blob).catch(() => null);
     if (!bmp) {
       // 解码失败（罕见格式）——退回原图，至少能显示
       const dataUrl = await blobToDataUrl(blob);
-      return { ok: true, dataUrl, passthrough: true, size: blob.size, type };
+      return { ok: true, dataUrl, passthrough: true, gif: isGif, size: blob.size, type };
     }
 
     const srcW = bmp.width;
@@ -368,6 +378,7 @@ async function handleThumb(msg) {
       srcH,
       srcBytes: blob.size,
       thumbBytes: outBlob.size,
+      gif: isGif,
       type: outBlob.type
     };
   } catch (e) {
@@ -430,31 +441,6 @@ async function handleDataUrl(msg) {
   }
 }
 
-// ------------------------------------------------------------------ 剪贴板
-async function handleClipboard(msg) {
-  const text = String(msg.text || '');
-  if (!text) return { ok: false, error: '空内容' };
-  try {
-    await navigator.clipboard.writeText(text);
-    return { ok: true };
-  } catch (e) {
-    // 退路：DOM 选区法（offscreen 文档是真实文档，可以用 execCommand）
-    try {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.position = 'fixed';
-      ta.style.opacity = '0';
-      document.body.appendChild(ta);
-      ta.select();
-      const ok = document.execCommand('copy');
-      ta.remove();
-      return ok ? { ok: true } : { ok: false, error: '浏览器拒绝了剪贴板写入' };
-    } catch (e2) {
-      return { ok: false, error: String((e2 && e2.message) || e2) };
-    }
-  }
-}
-
 // ------------------------------------------------------------------ 消息入口
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || msg.target !== 'offscreen') return false;
@@ -465,9 +451,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return true;
     case 'DATAURL':
       handleDataUrl(msg).then(sendResponse);
-      return true;
-    case 'CLIPBOARD':
-      handleClipboard(msg).then(sendResponse);
       return true;
     case 'CROP':
       handleCrop(msg).then(sendResponse);

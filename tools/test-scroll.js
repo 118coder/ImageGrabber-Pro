@@ -203,6 +203,86 @@ function check(name, cond, extra) {
     });
     check('失效图被标记为"预览不可用"', out.after.broken >= 1 && out.after.fallbacks >= 1, out.after);
 
+    console.log('\n[2] 「隐藏失效」开启时滚动：只移除坏图，不重建卡片');
+    const hidden = await pop.ev(`
+      // 清掉失效记录并重建一次卡片，让 404 图重新走完整的"发现 → 移除"过程
+      brokenThumbs.clear();
+      const cb = document.getElementById('hideBroken');
+      cb.checked = true;
+      cb.dispatchEvent(new Event('change', { bubbles: true }));
+      resetCards();
+      render();
+      await new Promise(r => setTimeout(r, 800));
+
+      const beforeSet = new Set(document.querySelectorAll('.card'));
+      const beforeCount = beforeSet.size;
+
+      let srcSets = 0, reloadsSame = 0;
+      const seen = new WeakMap();
+      const proto = HTMLImageElement.prototype;
+      const desc = Object.getOwnPropertyDescriptor(proto, 'src');
+      Object.defineProperty(proto, 'src', { configurable: true, get: desc.get, set: function (v) {
+        srcSets++;
+        const prev = seen.get(this);
+        if (prev !== undefined && prev === v) reloadsSame++;
+        seen.set(this, v);
+        return desc.set.call(this, v);
+      }});
+
+      const gridEl = document.getElementById('grid');
+      let cardAdded = 0, cardRemoved = 0, nodeAdded = 0, nodeRemoved = 0;
+      const removedUrls = [];
+      const mo = new MutationObserver(recs => {
+        for (const r of recs) {
+          for (const n of r.addedNodes) {
+            nodeAdded++;
+            if (n.nodeType === 1 && n.classList && n.classList.contains('card')) cardAdded++;
+          }
+          for (const n of r.removedNodes) {
+            nodeRemoved++;
+            if (n.nodeType === 1 && n.classList && n.classList.contains('card')) {
+              cardRemoved++;
+              if (n.dataset && n.dataset.url) removedUrls.push(n.dataset.url);
+            }
+          }
+        }
+      });
+      mo.observe(gridEl, { childList: true, subtree: true });
+
+      const H = gridEl.scrollHeight;
+      for (let i = 1; i <= 12; i++) {
+        gridEl.scrollTop = Math.round(H / 12 * i);
+        gridEl.dispatchEvent(new Event('scroll'));
+        await new Promise(r => setTimeout(r, 180));
+      }
+      await new Promise(r => setTimeout(r, 2500));
+      mo.disconnect();
+      Object.defineProperty(proto, 'src', desc);
+
+      const afterEls = [...document.querySelectorAll('.card')];
+      return {
+        beforeCount, afterCount: afterEls.length,
+        reused: afterEls.every((el) => beforeSet.has(el)),
+        broken: brokenThumbs.size,
+        brokenUrls: [...brokenThumbs.keys()],
+        cardAdded, cardRemoved, nodeAdded, nodeRemoved, srcSets, reloadsSame,
+        removedUrls,
+        viewItems: viewItems.length,
+        fallbacks: document.querySelectorAll('.thumb .ph').length
+      };`, 90000);
+    console.log('    实测：', JSON.stringify(hidden));
+    check('开启隐藏失效后仍能复用原卡片节点', hidden.reused === true, hidden);
+    check('滚动加载 404 图时没有插入任何新卡片（不重建网格）', hidden.cardAdded === 0, hidden);
+    check('隐藏失效时不新增任何节点（不闪占位）', hidden.nodeAdded === 0, hidden);
+    check('卡片减少的数量等于实际移除数', hidden.afterCount === hidden.beforeCount - hidden.cardRemoved, hidden);
+    check(
+      '被移除的卡片全部是预览失败项',
+      hidden.removedUrls.length === hidden.cardRemoved && hidden.removedUrls.every((u) => hidden.brokenUrls.includes(u)),
+      hidden
+    );
+    check('滚动过程中没有重复加载缩略图', hidden.reloadsSame === 0, hidden);
+    check('失效卡片被筛掉后列表与统计一致', hidden.viewItems === hidden.afterCount && hidden.fallbacks === 0, hidden);
+
     console.log(`\n结果：通过 ${pass} 项，失败 ${fail} 项\n`);
   } finally {
     try { proc.kill(); } catch (_) {}

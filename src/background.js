@@ -637,7 +637,6 @@ function broadcast(msg) {
 // ------------------------------------------------------------------ 右键菜单
 const MENUS = [
   { id: 'igp-image-download', title: '用图集捕手下载这张图片', contexts: ['image'] },
-  { id: 'igp-image-copy', title: '复制图片地址', contexts: ['image'] },
   { id: 'igp-link-download', title: '下载链接指向的图片', contexts: ['link'] },
   { id: 'igp-page-gallery', title: '提取本页所有图片（打开图库）', contexts: ['page', 'frame', 'selection'] },
   { id: 'igp-page-download', title: '直接下载本页全部图片', contexts: ['page', 'frame'] },
@@ -673,17 +672,6 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
         };
         await downloadOne(item, 1, { settings: await getSettings(), tabId: tab.id });
         broadcast({ type: 'IGP_TOAST', text: '已开始下载图片', kind: 'ok' });
-        break;
-      }
-      case 'igp-image-copy': {
-        if (!info.srcUrl) return;
-        const copied = await offscreenCall({ type: 'CLIPBOARD', text: info.srcUrl });
-        if (copied && copied.ok) {
-          broadcast({ type: 'IGP_TOAST', text: '图片地址已复制到剪贴板', kind: 'ok' });
-        } else {
-          await chrome.storage.session.set({ clipboard: info.srcUrl });
-          broadcast({ type: 'IGP_TOAST', text: '地址已取出：打开本扩展面板会自动复制', kind: 'warn' });
-        }
         break;
       }
       case 'igp-link-download': {
@@ -840,7 +828,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   w: inPage.w,
                   h: inPage.h,
                   passthrough: !!inPage.passthrough,
+                  gif: !!inPage.gif,
                   via: inPage.via || 'page'
+                };
+              } else if (inPage && inPage.pending) {
+                // 原图还在页面上加载：让弹窗稍后重试，绝不触发扩展侧重下
+                payload = {
+                  ok: false,
+                  pending: true,
+                  retryAfter: inPage.retryAfter || 1200
                 };
               }
             }
@@ -866,6 +862,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   w: result.w,
                   h: result.h,
                   passthrough: !!result.passthrough,
+                  gif: !!result.gif,
                   via: 'offscreen'
                 };
               } else {
