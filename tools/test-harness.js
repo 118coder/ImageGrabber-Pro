@@ -20,6 +20,7 @@ const listeners = [];
 const downloads = [];
 const dnrRules = [];
 const outbox = []; // background 广播出去的消息
+const menus = [];
 let menuListener = null;
 let sessionStore = {};
 let localStore = {};
@@ -128,7 +129,9 @@ const chrome = {
     removeAll(cb) {
       if (cb) cb();
     },
-    create() {},
+    create(m) {
+      menus.push(m);
+    },
     onClicked: { addListener: (fn) => (menuListener = fn) }
   },
   action: {
@@ -314,6 +317,10 @@ function check(name, cond, extra) {
 
   console.log('\n[7] 右键菜单');
   check('右键菜单已注册', menuListener !== null && Object.keys(menuListener).length >= 0, null);
+  if (typeof sandbox.createMenus === 'function') sandbox.createMenus();
+  const imageMenus = menus.filter((m) => Array.isArray(m.contexts) && m.contexts.includes('image'));
+  check('图片右键只保留直接下载', imageMenus.length === 1 && imageMenus[0].id === 'igp-image-download', imageMenus);
+  check('不再提供"复制图片地址"', !menus.some((m) => m.id === 'igp-image-copy'), menus.map((m) => m.id));
   downloads.length = 0;
   await menuListener({ menuItemId: 'igp-image-download', srcUrl: 'https://cdn.example.com/x/one.jpg', pageUrl: 'https://www.example.com/p' }, { id: 1, url: 'https://www.example.com/p' });
   check('右键单图下载可用', downloads.length === 1, downloads);

@@ -977,7 +977,13 @@
    * 另外，对已经是同一元素的图片（<img>/背景图/CSS），可以直接画到 canvas 拿像素，
    * 连 fetch 都不需要。
    */
-  const thumbMemo = new Map(); // url|side -> dataUrl（页面生命周期内复用）
+  const thumbMemo = new Map(); // url|side -> { dataUrl, w, h, gif }
+  // GIF 直接返回原始字节才能保留动画；超过这个大小就退回静态首帧，避免面板被单个动图拖垮
+  const GIF_PREVIEW_MAX = 6 * 1024 * 1024;
+
+  function looksLikeGif(url) {
+    return /\.gif(?:[?#]|$)/i.test(url || '') || /^data:image\/gif/i.test(url || '');
+  }
 
   function makeCanvas(w, h) {
     const c = document.createElement('canvas');
@@ -1076,6 +1082,9 @@
           }
         }
         if (el.naturalWidth > 0) {
+          // 跨域且不是 CORS 加载的 <img> 会污染 canvas，导出必然 SecurityError。
+          // 提前避开这条注定失败的路，直接让 fetch 通道走页面缓存。
+          if (!canReadElementPixels(el)) return null;
           return downsampleImageElement(el, maxSide, quality);
         }
         // 元素还没真正加载（src 是占位符等）：用同地址另开一个 Image
@@ -1095,6 +1104,20 @@
       /* 跨域污染等情况：交给下面的 fetch 通道 */
     }
     return null;
+  }
+
+  /** 该元素的像素能否安全导出（canvas 是否会被污染） */
+  function canReadElementPixels(el) {
+    const src = el.currentSrc || el.src;
+    if (!src) return false;
+    if (/^(data|blob):/i.test(src)) return true;
+    try {
+      if (new URL(src, location.href).origin === location.origin) return true;
+    } catch (_) {
+      /* 无法判断就按跨域处理 */
+    }
+    // 只有带 crossorigin 成功加载的跨域图片才是 origin-clean
+    return !!el.crossOrigin;
   }
 
   /** 离屏 <img> 加载：与页面 <img> 共享同一份 HTTP 缓存，不额外下载 */
@@ -1122,10 +1145,22 @@
     const blob = await res.blob();
     if (!blob.size) throw new Error('内容为空');
     const type = (blob.type || '').toLowerCase();
+    const isGif = /gif/.test(type) || looksLikeGif(url);
+
+    // GIF 保留原始字节，<img> 才能播放动画。缓存命中时字节来自页面自己的 HTTP 缓存。
+    if (isGif && blob.size <= GIF_PREVIEW_MAX) {
+      return {
+        dataUrl: await readBlobAsDataUrl(blob),
+        passthrough: true,
+        gif: true,
+        size: blob.size,
+        type
+      };
+    }
 
     // SVG 无法可靠地用 canvas 采样（且通常很小），直接返回原数据
     if (/svg/.test(type) || blob.size < 3000) {
-      return { dataUrl: await readBlobAsDataUrl(blob), passthrough: true, size: blob.size };
+      return { dataUrl: await readBlobAsDataUrl(blob), passthrough: true, gif: isGif, size: blob.size };
     }
 
     let bmp = null;
@@ -1144,6 +1179,7 @@
       }
       if (out) {
         out.srcBytes = blob.size;
+        out.gif = isGif; // 超过预览上限的 GIF：静态首帧 + GIF 标记
         return out;
       }
     }
@@ -1158,6 +1194,7 @@
         URL.revokeObjectURL(objUrl);
         if (out) {
           out.srcBytes = blob.size;
+          out.gif = isGif;
           return out;
         }
       } else {
@@ -1168,7 +1205,7 @@
     }
 
     // 最后兜底：原样返回字节（弹窗里 <img> 也许能显示，只是不降采样）
-    return { dataUrl: await readBlobAsDataUrl(blob), passthrough: true, size: blob.size };
+    return { dataUrl: await readBlobAsDataUrl(blob), passthrough: true, gif: isGif, size: blob.size };
   }
 
   async function makeThumb(msg) {
@@ -1178,14 +1215,24 @@
     const quality = typeof msg.quality === 'number' ? msg.quality : 0.72;
     const key = url + '|' + maxSide;
     const hit = thumbMemo.get(key);
-    if (hit) return { ok: true, dataUrl: hit, cached: true };
+    if (hit) {
+      return { ok: true, dataUrl: hit.dataUrl, w: hit.w, h: hit.h, gif: !!hit.gif, cached: true };
+    }
 
-    // 1) 页面上已经渲染出来的图：直接读像素，零网络
-    const direct = await thumbFromElement(url, maxSide, quality);
+    // 页面里的原图还在下载：立即让出后台并发槽，弹窗稍后重试。
+    // 若在此 await decode()/fetch，几张慢图就会把整条缩略图队列堵死。
+    const pendingEl = elementsByUrl.get(url);
+    if (pendingEl && pendingEl.tagName === 'IMG' && !pendingEl.complete) {
+      return { ok: false, pending: true, retryAfter: 1200 };
+    }
+
+    // 1) 页面上已经渲染出来的图：直接读像素，零网络。
+    // GIF 跳过这条（canvas 只能拿首帧），走 fetch 保留原始动画。
+    const direct = looksLikeGif(url) ? null : await thumbFromElement(url, maxSide, quality);
     if (direct && direct.dataUrl) {
       if (thumbMemo.size > 400) thumbMemo.clear();
-      thumbMemo.set(key, direct.dataUrl);
-      return { ok: true, dataUrl: direct.dataUrl, w: direct.w, h: direct.h, via: 'element' };
+      thumbMemo.set(key, { dataUrl: direct.dataUrl, w: direct.w, h: direct.h, gif: false });
+      return { ok: true, dataUrl: direct.dataUrl, w: direct.w, h: direct.h, gif: false, via: 'element' };
     }
 
     // 2) 走页面分区的 HTTP 缓存
@@ -1193,9 +1240,15 @@
       try {
         const fetched = await thumbFromFetch(url, maxSide, quality);
         if (fetched && fetched.dataUrl) {
+          // 动图原字节可能很大，不放进页面内存缓存，避免同一张 GIF 存两份
           if (!fetched.passthrough) {
             if (thumbMemo.size > 400) thumbMemo.clear();
-            thumbMemo.set(key, fetched.dataUrl);
+            thumbMemo.set(key, {
+              dataUrl: fetched.dataUrl,
+              w: fetched.w,
+              h: fetched.h,
+              gif: !!fetched.gif
+            });
           }
           return {
             ok: true,
@@ -1203,6 +1256,7 @@
             w: fetched.w,
             h: fetched.h,
             passthrough: !!fetched.passthrough,
+            gif: !!fetched.gif,
             via: 'page-cache'
           };
         }
@@ -1214,7 +1268,7 @@
 
     // 3) data: 地址本来就没有网络开销，直接返回
     if (/^data:/i.test(url)) {
-      return { ok: true, dataUrl: url, passthrough: true, via: 'inline' };
+      return { ok: true, dataUrl: url, passthrough: true, gif: looksLikeGif(url), via: 'inline' };
     }
 
     return { ok: false, error: '无法在页面内生成缩略图' };

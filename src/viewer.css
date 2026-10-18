@@ -1,4 +1,4 @@
-/* 图库页：在弹窗样式基础上放大布局 */
+/* 图库页：沿用面板设计令牌，仅放大布局 */
 body.viewer {
   width: 100%;
   min-width: 640px;
@@ -7,25 +7,23 @@ body.viewer {
 }
 
 body.viewer .grid {
-  /* 列宽跟随尺寸滑块（--card-min 由 popup.css 提供） */
-  grid-template-columns: repeat(auto-fill, minmax(var(--card-min), 1fr));
   gap: 12px;
-  padding: 8px 16px 16px;
+  padding: 4px 18px 18px;
 }
 
 body.viewer .thumb {
-  /* 高度由 --thumb-h 控制，图库整体稍微放大一点 */
   height: calc(var(--thumb-h) * 1.15);
 }
 
-body.viewer .bar,
-body.viewer .tools,
-body.viewer .subbar {
-  padding-left: 16px;
-  padding-right: 16px;
+body.viewer .topbar,
+body.viewer .filters,
+body.viewer .quickbar,
+body.viewer .bottombar {
+  padding-right: 18px;
+  padding-left: 18px;
 }
 
-body.viewer .tools input[type="search"] {
+body.viewer .search-box {
   max-width: 380px;
 }
 
@@ -38,5 +36,5 @@ body.viewer .name {
 }
 
 body.viewer .empty {
-  height: 60vh;
+  min-height: 56vh;
 }

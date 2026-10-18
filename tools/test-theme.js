@@ -189,6 +189,36 @@ function contrast(fg, bg) {
     check('默认文字是深色', isDark(dark.bodyFg), dark.bodyFg);
     check('默认对比度达到 WCAG AA（≥ 4.5）', contrast(dark.bodyFg, dark.bodyBg) >= 4.5, contrast(dark.bodyFg, dark.bodyBg).toFixed(2));
 
+    console.log('\n[2c] 表单文字可读性（浅色，重点防系统深色主题染色）');
+    const form = await pop.ev(`
+      const q = document.getElementById('q');
+      const qs = getComputedStyle(q);
+      const ss = getComputedStyle(document.querySelector('.search-box'));
+      const controls = ['minSize', 'typeFilter', 'sort'].map(id => {
+        const el = document.getElementById(id);
+        const cs = getComputedStyle(el);
+        return { id, color: cs.color, bg: cs.backgroundColor,
+                 fill: cs.webkitTextFillColor, scheme: cs.colorScheme, opacity: cs.opacity };
+      });
+      return {
+        search: { color: qs.color, bg: ss.backgroundColor, fill: qs.webkitTextFillColor, scheme: qs.colorScheme },
+        placeholder: getComputedStyle(q, '::placeholder').color,
+        controls,
+        rootScheme: getComputedStyle(document.documentElement).colorScheme
+      };`);
+    console.log('    ', JSON.stringify(form));
+    for (const c of form.controls) {
+      check(`${c.id} 文字对比度 ≥ 4.5`, contrast(c.color, c.bg) >= 4.5, c);
+      check(`${c.id} 文字填充色与 color 一致`, c.fill === c.color, c);
+    }
+    check('搜索框文字对比度 ≥ 4.5', contrast(form.search.color, form.search.bg) >= 4.5, form.search);
+    check('搜索占位文字对比度 ≥ 4.5', contrast(form.placeholder, form.search.bg) >= 4.5, { ph: form.placeholder, bg: form.search.bg });
+    check(
+      '表单 color-scheme 锁定 light（不受系统深色主题影响）',
+      form.rootScheme === 'light' && form.controls.every((c) => c.scheme === 'light') && form.search.scheme === 'light',
+      form
+    );
+
     console.log('\n[2b] 手动切到深色主题');
     const darkTheme = await pop.ev(`
       applyTheme('dark');
@@ -199,6 +229,17 @@ function contrast(fg, bg) {
     console.log('    ', JSON.stringify(darkTheme));
     check('能切到深色', darkTheme.dataTheme === 'dark' && isDark(darkTheme.bodyBg), darkTheme);
     check('深色下文字是浅色', isLight(darkTheme.bodyFg), darkTheme.bodyFg);
+    const darkForm = await pop.ev(`
+      const sel = getComputedStyle(document.getElementById('minSize'));
+      const q = getComputedStyle(document.getElementById('q'));
+      const sb = getComputedStyle(document.querySelector('.search-box'));
+      return { selColor: sel.color, selBg: sel.backgroundColor, selScheme: sel.colorScheme,
+               searchColor: q.color, searchBg: sb.backgroundColor,
+               placeholder: getComputedStyle(document.getElementById('q'), '::placeholder').color };`);
+    console.log('    ', JSON.stringify(darkForm));
+    check('深色下下拉文字对比度 ≥ 4.5', contrast(darkForm.selColor, darkForm.selBg) >= 4.5, darkForm);
+    check('深色下搜索占位对比度 ≥ 4.5', contrast(darkForm.placeholder, darkForm.searchBg) >= 4.5, darkForm);
+    check('深色下表单 color-scheme 为 dark', darkForm.selScheme === 'dark', darkForm.selScheme);
 
     console.log('\n[3] 切回浅色主题');
     const light = await pop.ev(`
@@ -277,6 +318,103 @@ function contrast(fg, bg) {
                bodyBg: getComputedStyle(document.body).backgroundColor };`);
     console.log('    ', JSON.stringify(back));
     check('能切回深色', back.dataTheme === 'dark' && isDark(back.bodyBg), back);
+
+    console.log('\n[7] 卡片选择 / 搜索 / 空状态的交互契约');
+    const inter = await pop.ev(`
+      applyTheme('light');
+      const q = document.getElementById('q');
+      q.value = '';
+      q.dispatchEvent(new Event('input', { bubbles: true }));
+      await new Promise(r => setTimeout(r, 400));
+
+      const first = document.querySelector('.card');
+      first.click();
+      await new Promise(r => setTimeout(r, 60));
+      const afterCardClick = {
+        selected: first.classList.contains('selected'),
+        checked: first.querySelector('input').checked,
+        disabled: document.getElementById('dlSel').disabled,
+        label: document.getElementById('dlSelLabel').textContent,
+        stat: document.getElementById('stat').textContent
+      };
+
+      const box = first.querySelector('input');
+      box.click();
+      await new Promise(r => setTimeout(r, 60));
+      const afterBoxClick = {
+        selected: first.classList.contains('selected'),
+        checked: box.checked,
+        selectedSize: selected.size
+      };
+
+      first.click();
+      document.getElementById('selAll').click();
+      const afterAll = { selected: selected.size, view: viewItems.length, cards: document.querySelectorAll('.card').length };
+      document.getElementById('selNone').click();
+      const afterNone = { selected: selected.size };
+
+      // 精确匹配第一张图，验证筛选时复用同一个卡片节点
+      const needle = first.dataset.url.split('/').pop();
+      q.value = needle;
+      q.dispatchEvent(new Event('input', { bubbles: true }));
+      await new Promise(r => setTimeout(r, 400));
+      const one = document.querySelector('.card');
+      const filtered = {
+        count: document.querySelectorAll('.card').length,
+        sameNode: one === first,
+        clearVisible: !document.getElementById('clearSearch').hidden
+      };
+
+      q.value = '__no_such_image_98765__';
+      q.dispatchEvent(new Event('input', { bubbles: true }));
+      await new Promise(r => setTimeout(r, 400));
+      const empty = {
+        cards: document.querySelectorAll('.card').length,
+        visible: !document.getElementById('empty').hidden,
+        text: document.getElementById('emptyText').textContent.slice(0, 60)
+      };
+
+      document.getElementById('clearSearch').click();
+      await new Promise(r => setTimeout(r, 400));
+      const cleared = {
+        q: q.value,
+        cards: document.querySelectorAll('.card').length,
+        emptyHidden: document.getElementById('empty').hidden,
+        clearHidden: document.getElementById('clearSearch').hidden
+      };
+
+      // 选中第一张后把它筛掉：选中集合应保留，下载按钮仍可用
+      const cardNow = document.querySelectorAll('.card');
+      cardNow[0].click();
+      const otherNeedle = cardNow[1].dataset.url.split('/').pop();
+      q.value = otherNeedle;
+      q.dispatchEvent(new Event('input', { bubbles: true }));
+      await new Promise(r => setTimeout(r, 400));
+      const hiddenSelection = {
+        selectedSize: selected.size,
+        disabled: document.getElementById('dlSel').disabled,
+        label: document.getElementById('dlSelLabel').textContent,
+        visibleCards: document.querySelectorAll('.card').length
+      };
+      document.getElementById('clearSearch').click();
+      await new Promise(r => setTimeout(r, 300));
+
+      return { afterCardClick, afterBoxClick, afterAll, afterNone, filtered, empty, cleared, hiddenSelection };`);
+    console.log('    ', JSON.stringify(inter));
+    check('点卡片能选中并激活下载按钮', inter.afterCardClick.selected && inter.afterCardClick.checked && !inter.afterCardClick.disabled, inter.afterCardClick);
+    check('下载按钮文案带选中数量', /1/.test(inter.afterCardClick.label), inter.afterCardClick.label);
+    check('点复选框只切换一次（不会双触发）', !inter.afterBoxClick.selected && !inter.afterBoxClick.checked && inter.afterBoxClick.selectedSize === 0, inter.afterBoxClick);
+    check('全选覆盖当前筛选结果', inter.afterAll.selected === inter.afterAll.view && inter.afterAll.selected > 0, inter.afterAll);
+    check('清空后选中数为 0', inter.afterNone.selected === 0, inter.afterNone);
+    check('过滤为单张时复用原卡片节点', inter.filtered.count === 1 && inter.filtered.sameNode === true, inter.filtered);
+    check('过滤时显示清空搜索按钮', inter.filtered.clearVisible === true, inter.filtered);
+    check('无匹配时显示空状态而不是空白', inter.empty.cards === 0 && inter.empty.visible === true, inter.empty);
+    check('清空搜索后恢复列表、隐藏空状态', inter.cleared.q === '' && inter.cleared.cards > 0 && inter.cleared.emptyHidden === true && inter.cleared.clearHidden === true, inter.cleared);
+    check(
+      '选中项被筛选隐藏后仍保留，下载按钮可用',
+      inter.hiddenSelection.selectedSize === 1 && inter.hiddenSelection.disabled === false && /1/.test(inter.hiddenSelection.label),
+      inter.hiddenSelection
+    );
 
     console.log('\n[异常]');
     if (!pop.exc.length) console.log('  （无）');

@@ -95,6 +95,11 @@ function toast(text, kind) {
 }
 
 // ------------------------------------------------------------------ 渲染
+function isGifItem(it) {
+  const u = (it && it.url) || '';
+  return /\.gif(?:[?#]|$)/i.test(u) || /^data:image\/gif/i.test(u) || /[?&](?:format|type)=gif(?:&|$)/i.test(u);
+}
+
 function applyFilter() {
   const q = state.q.trim().toLowerCase();
   const min = state.minSize;
@@ -102,11 +107,15 @@ function applyFilter() {
     if (!state.susp && (it.probable || it.kind === 'attr')) return false;
     if (state.hideBroken && brokenThumbs.has(it.url)) return false;
     const g = kindGroup(it.kind);
-    if (state.typeFilter !== 'all' && state.typeFilter !== g) return false;
+    const gif = isGifItem(it);
+    if (state.typeFilter === 'gif') {
+      if (!gif) return false;
+    } else if (state.typeFilter !== 'all' && state.typeFilter !== g) return false;
     const maxDim = Math.max(it.w || 0, it.h || 0);
     if (min > 0 && !(it.kind === 'canvas' || it.kind === 'media')) {
       if (maxDim && maxDim < min) return false;
-      if (!maxDim && min >= 300) return false;
+      // 尺寸未知的 GIF 多数是 1×1 埋点；启用尺寸筛选时按小图处理
+      if (!maxDim && (min >= 300 || gif)) return false;
     }
     if (q && (it.url + ' ' + (it.alt || '') + ' ' + (it.label || '')).toLowerCase().indexOf(q) === -1) return false;
     return true;
@@ -117,6 +126,13 @@ function applyFilter() {
   viewItems = list;
 }
 
+const CANVAS_ICON =
+  '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="m4 17 4.7-4.3a2 2 0 0 1 2.7 0L17 18"/></svg>';
+const VIDEO_ICON =
+  '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="13" height="14" rx="3"/><path d="m16 10 4.2-2.4a.8.8 0 0 1 1.3.7v7.4a.8.8 0 0 1-1.3.7L16 14z"/><path d="m9.5 9.2 3.4 2.8-3.4 2.8z"/></svg>';
+const BROKEN_ICON =
+  '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="m3.5 16 4.3-4a2 2 0 0 1 2.7 0l3.2 3M13 13.8l1.4-1.3a2 2 0 0 1 2.7 0l3.4 3.2M4 4l16 16"/></svg>';
+
 function render() {
   applyFilter();
   grid.innerHTML = viewItems
@@ -126,16 +142,20 @@ function render() {
       const dim = it.w && it.h ? `${it.w}×${it.h}` : '';
       const tagCls = it.probable || it.kind === 'attr' ? 'susp' : g;
       return `
-      <div class="card" data-i="${i}" title="${escapeHtml(it.url.slice(0, 300))}">
-        <div class="thumb">
-          ${visual ? `<div class="ph">${it.kind === 'canvas' ? '🎨' : '🎬'}</div>` : `<img alt="" decoding="async" data-src="${escapeHtml(it.url)}" />`}
-          <label class="chk"><input type="checkbox" data-i="${i}" /></label>
+      <div class="card${it.w && it.h && it.w > it.h * 1.6 ? ' wide' : ''}" data-i="${i}" title="${escapeHtml(it.url.slice(0, 300))}">
+        <div class="thumb${visual ? ' is-loaded' : ' is-loading'}">
+          ${
+            visual
+              ? `<div class="visual-ico">${it.kind === 'canvas' ? CANVAS_ICON : VIDEO_ICON}<span>${KIND_LABEL[it.kind] || '媒体'}</span></div>`
+              : `<img alt="" decoding="async" data-src="${escapeHtml(it.url)}" data-frame-id="${it.frameId == null ? 0 : it.frameId}" />`
+          }
+          <label class="chk" title="选择这张图片"><input type="checkbox" data-i="${i}" aria-label="选择这张图片" /></label>
           <span class="tag ${tagCls}">${KIND_LABEL[it.kind] || it.kind}</span>
           ${dim ? `<span class="dim">${dim}</span>` : ''}
           <div class="acts">
-            <button data-act="dl" data-i="${i}">下载</button>
-            <button data-act="copy" data-i="${i}">复制</button>
-            ${visual ? `<button data-act="export" data-i="${i}">导出</button>` : `<button data-act="open" data-i="${i}">查看</button>`}
+            <button type="button" data-act="dl" data-i="${i}">下载</button>
+            <button type="button" data-act="copy" data-i="${i}">复制</button>
+            ${visual ? `<button type="button" data-act="export" data-i="${i}">导出</button>` : `<button type="button" data-act="open" data-i="${i}">查看</button>`}
           </div>
         </div>
         <div class="name">${escapeHtml(fmtName(it))}</div>
@@ -151,45 +171,123 @@ function render() {
 
 /** 统一走后台降采样：拿小尺寸 WebP，而不是让 <img> 解码原图 */
 const thumbCache = new Map();
+const THUMB_CACHE_BYTES = 64 * 1024 * 1024;
+let thumbCacheBytes = 0;
+const gifUrls = new Map(); // url → 是否保留原始动画
+const boundThumbs = new WeakSet();
+const MAX_PENDING_RETRIES = 30;
+let brokenRenderTimer = null;
+
+/** 按条数与总字节数双重淘汰（GIF 原图可能很大） */
+function rememberThumb(key, dataUrl) {
+  const prev = thumbCache.get(key);
+  if (prev) thumbCacheBytes -= prev.length;
+  thumbCache.delete(key);
+  thumbCache.set(key, dataUrl);
+  thumbCacheBytes += dataUrl.length;
+  while (thumbCache.size > 800 || thumbCacheBytes > THUMB_CACHE_BYTES) {
+    const oldest = thumbCache.keys().next().value;
+    const val = thumbCache.get(oldest);
+    thumbCacheBytes -= val ? val.length : 0;
+    thumbCache.delete(oldest);
+  }
+}
+
+function markCardGif(card, url) {
+  if (!card || !gifUrls.has(url)) return;
+  const tag = card.querySelector('.tag');
+  if (!tag) return;
+  tag.classList.add('gif');
+  tag.textContent = 'GIF';
+  tag.title = gifUrls.get(url) ? 'GIF 动图预览' : 'GIF 大图静态预览';
+}
+
 function loadThumb(img) {
   const url = img.dataset.src;
   if (!url || img.dataset.started) return;
   img.dataset.started = '1';
 
+  const thumb = img.closest('.thumb');
+  const show = (src) => {
+    if (!img.isConnected || !src) return;
+    if (thumb) thumb.classList.add('is-loading');
+    img.src = src;
+  };
+
+  // 事件只挂一次：pending 重试会反复进入本函数
+  if (!boundThumbs.has(img)) {
+    boundThumbs.add(img);
+    img.addEventListener('load', () => {
+      if (!thumb) return;
+      thumb.classList.remove('is-loading', 'is-broken');
+      thumb.classList.add('is-loaded');
+    });
+    img.addEventListener(
+      'error',
+      () => {
+        const host = img.parentElement;
+        if (!host) return;
+        const src = img.dataset.src;
+        if (src && !brokenThumbs.has(src)) {
+          brokenThumbs.set(src, 'load-failed');
+        }
+        if (state.hideBroken) {
+          // 批量重绘，避免多张图同时失败时整页反复刷新；也不闪占位
+          clearTimeout(brokenRenderTimer);
+          brokenRenderTimer = setTimeout(render, 180);
+          img.style.display = 'none';
+          return;
+        }
+        // 就地隐藏 + 占位，不删除节点、不改变网格布局
+        img.style.display = 'none';
+        host.classList.remove('is-loading');
+        host.classList.add('is-broken');
+        if (host.querySelector('.ph')) return;
+        const ph = document.createElement('div');
+        ph.className = 'ph';
+        ph.innerHTML = BROKEN_ICON;
+        const tip = document.createElement('div');
+        tip.className = 'placeholder-txt';
+        tip.textContent = '预览不可用';
+        host.appendChild(ph);
+        host.appendChild(tip);
+      },
+      { once: true }
+    );
+  }
+
   const maxSide = viewerThumbSide();
   const key = url + '|' + maxSide;
   if (thumbCache.has(key)) {
-    img.src = thumbCache.get(key);
+    show(thumbCache.get(key));
+    markCardGif(img.closest('.card'), url);
     return;
   }
-  sendBg({ type: 'IGP_THUMB', url, pageUrl, maxSide }).then((res) => {
-    if (res && res.ok && res.dataUrl) {
-      if (thumbCache.size > 800) thumbCache.clear();
-      thumbCache.set(key, res.dataUrl);
-      img.src = res.dataUrl;
+  const msg = { type: 'IGP_THUMB', url, pageUrl, maxSide, frameId: img.dataset.frameId || 0 };
+  if (srcTabId != null) msg.tabId = srcTabId;
+  sendBg(msg).then((res) => {
+    if (res && res.pending) {
+      const tries = Number(img.dataset.pendingTries || 0) + 1;
+      img.dataset.pendingTries = String(tries);
+      if (tries <= MAX_PENDING_RETRIES) {
+        setTimeout(() => {
+          if (!img.isConnected || img.naturalWidth > 0) return;
+          img.dataset.started = '';
+          loadThumb(img);
+        }, Math.max(800, Math.min(3000, Number(res.retryAfter) || 1200)));
+        return;
+      }
+    } else if (res && res.ok && res.dataUrl) {
+      rememberThumb(key, res.dataUrl);
+      if (res.gif) {
+        gifUrls.set(url, !!res.passthrough);
+        markCardGif(img.closest('.card'), url);
+      }
+      show(res.dataUrl);
       return;
     }
-    img.src = url; // 兜底直连
+    show(url); // 兜底直连
   });
-  img.addEventListener(
-    'error',
-    () => {
-      const host = img.parentElement;
-      if (!host) return;
-      const src = img.dataset.src;
-      if (src && !brokenThumbs.has(src)) {
-        brokenThumbs.set(src, 'load-failed');
-        if (state.hideBroken) render();
-      }
-      img.remove();
-      if (host.querySelector('.ph')) return;
-      const ph = document.createElement('div');
-      ph.className = 'ph';
-      ph.textContent = '🚫';
-      host.appendChild(ph);
-    },
-    { once: true }
-  );
 }
 
 function viewerThumbSide() {
@@ -206,9 +304,10 @@ function paint() {
     const box = card.querySelector('input[type="checkbox"]');
     if (box) box.checked = !!on;
   });
-  $('stat').textContent = `已选 ${selected.size} 张 · 共 ${viewItems.length} 张`;
+  $('stat').innerHTML = `已选 <b>${selected.size}</b> 张 · 共 <b>${viewItems.length}</b> 张`;
   $('dlSel').disabled = selected.size === 0;
-  $('dlSel').textContent = selected.size ? `下载选中 (${selected.size})` : '下载选中';
+  const label = $('dlSelLabel');
+  if (label) label.textContent = selected.size ? `下载选中 (${selected.size})` : '下载选中';
 }
 
 // ------------------------------------------------------------------ 交互
@@ -238,8 +337,24 @@ grid.addEventListener('click', async (e) => {
     }
     return;
   }
+
+  // 选择框交给原生控件处理，change 事件里统一同步
+  if (e.target.closest('.chk')) return;
+
   if (selected.has(it.url)) selected.delete(it.url);
   else selected.add(it.url);
+  paint();
+});
+
+grid.addEventListener('change', (e) => {
+  const box = e.target.closest('input[type="checkbox"]');
+  if (!box) return;
+  const card = box.closest('.card');
+  if (!card) return;
+  const it = viewItems[Number(card.dataset.i)];
+  if (!it) return;
+  if (box.checked) selected.add(it.url);
+  else selected.delete(it.url);
   paint();
 });
 
@@ -306,11 +421,11 @@ $('selBig').addEventListener('click', () => {
   });
   paint();
 });
-$('dlSel').addEventListener('click', () => downloadItems(viewItems.filter((it) => selected.has(it.url))));
+$('dlSel').addEventListener('click', () => downloadItems(allItems.filter((it) => selected.has(it.url))));
 $('dlAll').addEventListener('click', () => downloadItems(viewItems.slice()));
 $('zip').addEventListener('click', async () => {
-  const list = viewItems.filter((it) => selected.has(it.url));
-  const items = list.length ? list : viewItems;
+  const picked = allItems.filter((it) => selected.has(it.url));
+  const items = picked.length ? picked : viewItems;
   if (!items.length) return;
   const payload = [];
   for (const it of items) {
@@ -367,6 +482,7 @@ function applyThumbSize(size) {
   state.thumbSize = h;
   document.documentElement.style.setProperty('--thumb-h', h + 'px');
   document.documentElement.style.setProperty('--card-min', Math.round(h * 1.02) + 'px');
+  document.documentElement.style.setProperty('--range-fill', (((h - 72) / (260 - 72)) * 100).toFixed(1) + '%');
   if ($('thumbSizeVal')) $('thumbSizeVal').textContent = String(h);
   if ($('thumbSize') && Number($('thumbSize').value) !== h) $('thumbSize').value = String(h);
 }

@@ -5,53 +5,83 @@
     <title>图集捕手 · 设置</title>
     <style>
       :root {
+        color-scheme: light;
         --bg: #ffffff;
         --card: #ffffff;
-        --line: #dfe3ec;
-        --fg: #12151f;
-        --dim: #5f6779;
-        --accent: #6366f1;
+        --line: #e6e9f0;
+        --line-2: #d3d9e4;
+        --fg: #141824;
+        --dim: #4b5565;
+        --dim-2: #667085;
+        --accent: #5b57e8;
+        --accent-deep: #4b47d6;
+        --accent-soft: rgba(91, 87, 232, 0.1);
       }
       * { box-sizing: border-box; }
       body {
         margin: 0;
         background: var(--bg);
         color: var(--fg);
-        font: 14px/1.6 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
-        padding: 28px 20px 60px;
+        font: 14px/1.65 "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+        padding: 32px 20px 64px;
+        -webkit-font-smoothing: antialiased;
       }
-      .wrap { max-width: 760px; margin: 0 auto; }
-      h1 { font-size: 20px; margin: 0 0 4px; display: flex; align-items: center; gap: 10px; }
-      .logo { width: 22px; height: 22px; border-radius: 6px; background: linear-gradient(135deg, #6366f1, #22d3ee); }
-      .sub { color: var(--dim); font-size: 13px; margin: 0 0 22px; }
-      .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; margin-bottom: 16px; }
-      .card h2 { font-size: 14px; margin: 0 0 14px; color: #4338ca; letter-spacing: 0.4px; }
-      .row { display: flex; align-items: center; gap: 14px; padding: 8px 0; border-bottom: 1px dashed #e8ecf3; }
+      .wrap { max-width: 780px; margin: 0 auto; }
+      h1 { font-size: 21px; margin: 0 0 4px; display: flex; align-items: center; gap: 10px; letter-spacing: 0.2px; }
+      .logo {
+        width: 26px; height: 26px; border-radius: 8px;
+        background: linear-gradient(135deg, #5b57e8 0%, #7c6cf5 62%, #12b5c9 135%);
+        box-shadow: 0 6px 14px -6px rgba(91, 87, 232, 0.7);
+      }
+      .sub { color: var(--dim-2); font-size: 13px; margin: 0 0 24px; }
+      .card {
+        background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+        padding: 20px 22px; margin-bottom: 16px;
+        box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+      }
+      .card h2 { font-size: 13.5px; margin: 0 0 14px; color: var(--accent); letter-spacing: 0.3px; font-weight: 650; }
+      .row { display: flex; align-items: center; gap: 14px; padding: 9px 0; border-bottom: 1px dashed var(--line); }
       .row:last-child { border-bottom: none; }
-      .row .label { flex: 0 0 210px; }
-      .row .label small { display: block; color: var(--dim); font-size: 12px; font-weight: 400; }
+      .row .label { flex: 0 0 220px; }
+      .row .label small { display: block; color: var(--dim-2); font-size: 12px; font-weight: 400; }
       .row .ctrl { flex: 1 1 auto; display: flex; align-items: center; gap: 10px; }
       input[type="text"], input[type="number"], select {
-        background: #f7f9fc; border: 1px solid var(--line); color: var(--fg);
+        background: #f5f6f9; border: 1px solid var(--line); color: var(--fg);
+        -webkit-text-fill-color: var(--fg);
         border-radius: 8px; padding: 7px 10px; font-size: 13px; outline: none; min-width: 90px;
+        transition: border-color 0.14s ease, background 0.14s ease, box-shadow 0.14s ease;
       }
+      input[type="text"]:hover, input[type="number"]:hover, select:hover { border-color: var(--line-2); }
+      input[type="text"]:focus, input[type="number"]:focus, select:focus {
+        border-color: var(--accent); background: #fff;
+        box-shadow: 0 0 0 3px var(--accent-soft);
+      }
+      input::placeholder { color: var(--dim-2); -webkit-text-fill-color: var(--dim-2); opacity: 1; }
+      select option { background: #fff; color: var(--fg); }
       input[type="text"] { flex: 1 1 auto; }
-      input:focus, select:focus { border-color: var(--accent); }
       input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); }
-      .switch { display: inline-flex; align-items: center; gap: 8px; color: var(--dim); font-size: 13px; }
-      code { background: #f4f6fa; border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; font-size: 12px; color: #4f46e5; }
+      .switch { display: inline-flex; align-items: center; gap: 8px; color: var(--dim); font-size: 13px; cursor: pointer; }
+      code { background: #f5f6f9; border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; font-size: 12px; color: var(--accent-deep); }
       .actions { display: flex; gap: 10px; align-items: center; margin-top: 8px; }
       button {
         border-radius: 9px; padding: 9px 18px; font-size: 13px; cursor: pointer;
-        border: 1px solid var(--line); background: #f4f6fa; color: var(--fg);
+        border: 1px solid var(--line); background: #f5f6f9; color: var(--fg);
+        transition: background 0.14s ease, border-color 0.14s ease, transform 0.1s ease;
       }
-      button.primary { background: linear-gradient(135deg, #6366f1, #4f46e5); border-color: transparent; font-weight: 600; color: #fff; }
-      button:hover { border-color: #b9c1d4; }
-      .saved { color: #4ade80; font-size: 13px; opacity: 0; transition: opacity 0.25s; }
+      button.primary {
+        background: linear-gradient(180deg, #6963f1, #554ede);
+        border-color: transparent; font-weight: 600; color: #fff;
+        box-shadow: 0 4px 12px -6px rgba(91, 87, 232, 0.72);
+      }
+      button:hover { border-color: var(--line-2); background: #eef1f5; }
+      button.primary:hover { background: linear-gradient(180deg, #736df5, #5c55e6); border-color: transparent; }
+      button:active { transform: translateY(1px); }
+      .saved { color: #0f9f6e; font-size: 13px; font-weight: 600; opacity: 0; transition: opacity 0.25s; }
       .saved.show { opacity: 1; }
-      .vars { color: var(--dim); font-size: 12px; margin-top: 6px; }
+      .vars { color: var(--dim-2); font-size: 12px; margin-top: 8px; line-height: 1.9; }
       .tips { color: var(--dim); font-size: 12.5px; }
       .tips li { margin-bottom: 4px; }
+      :focus-visible { outline: 2px solid rgba(91, 87, 232, 0.5); outline-offset: 2px; }
     </style>
   </head>
   <body>
