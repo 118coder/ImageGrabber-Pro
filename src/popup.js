@@ -50,11 +50,59 @@ const state = {
   thorough: false,
   thumbSize: 116,
   hideBroken: false,
+  dedupe: true,
   theme: 'light'
 };
 
 /** 预览失败的条目（url → 原因）。缩略图加载失败时写入，用于"隐藏失效"筛选 */
 const brokenThumbs = new Map();
+
+/** 上一轮"合并重复"折叠掉的条目数，用于状态栏提示 */
+let dedupedHidden = 0;
+
+/**
+ * 内容指纹表：url → {md5}
+ * 缩略图生成时顺手算出来的（页面内那条零网络链路），不是额外请求。
+ * 有了它就能认出"地址不同、尺寸不同，其实是同一张图"。
+ */
+const contentFp = new Map();
+let contentDedupeTimer = null;
+
+
+function dupReasonText(reason) {
+  return reason === 'md5' ? '字节完全相同（MD5 一致）' : '地址只是参数不同';
+}
+
+function dupTitle(it) {
+  return `同一张图片在页面里有 ${it.dupCount} 个地址，已合并显示（${dupReasonText(it.dupReason)}）`;
+}
+
+/**
+ * 记下一条内容指纹。只有"合并结果真的变了"才重绘，
+ * 否则滚动过程中每加载一张缩略图都会动一次列表。
+ */
+function recordContent(url, res) {
+  const md5 = res.md5 || '';
+  if (!md5) return;
+  const prev = contentFp.get(url);
+  if (prev && prev.md5 === md5) return;
+  contentFp.set(url, { md5 });
+  if (!state.dedupe) return;
+  // 真·防抖：缩略图是分批出来的，必须在最后一张到达后再跑一次，
+  // 否则先到的那几张跑完就再也不会重新判重了
+  clearTimeout(contentDedupeTimer);
+  contentDedupeTimer = setTimeout(() => {
+    contentDedupeTimer = null;
+    const before = viewItems.length;
+    applyFilter();
+    if (viewItems.length !== before) {
+      render();
+      toast(`按 MD5 又合并了 ${before - viewItems.length} 张重复图片`, 'ok');
+    } else {
+      updateStat();
+    }
+  }, 700);
+}
 
 // ------------------------------------------------------------------ 小工具
 function sendBg(msg, timeoutMs) {
@@ -129,17 +177,25 @@ function kindLabel(kind) {
 }
 
 function fmtName(url, alt) {
-  if (url.startsWith('data:')) {
-    if (url.startsWith('data:image/svg')) return alt || '内联 SVG 矢量图';
-    return alt || '内联数据图片';
+  // 支持 fmtName(item) 与 fmtName(url, alt) 两种调用
+  const it = url && typeof url === 'object' ? url : { url: String(url || ''), alt: alt || '' };
+  const u = String(it.url || '');
+  if (u.startsWith('data:')) {
+    if (u.startsWith('data:image/svg')) return it.alt || '内联 SVG 矢量图';
+    return it.alt || '内联数据图片';
   }
-  if (/^(canvas|video):\/\//.test(url)) return alt || (url.startsWith('canvas') ? 'Canvas 画布内容' : '视频当前帧');
+  if (/^(canvas|video):\/\//.test(u)) return it.alt || (u.startsWith('canvas') ? 'Canvas 画布内容' : '视频当前帧');
+  // 面板显示的名字 = 下载落盘的名字（地址是 UUID 时用页面上的名字）
+  if (window.IGPName) {
+    const n = window.IGPName.filename(it);
+    if (n) return n;
+  }
   try {
-    const p = new URL(url);
+    const p = new URL(u);
     const last = decodeURIComponent(p.pathname.split('/').filter(Boolean).pop() || p.host);
-    return (alt ? alt + ' · ' : '') + last;
+    return (it.alt ? it.alt + ' · ' : '') + last;
   } catch (_) {
-    return url.slice(0, 60);
+    return u.slice(0, 60);
   }
 }
 
@@ -239,6 +295,10 @@ async function rescan(silent) {
   // 重新扫描后旧条目的预览结论已不适用（地址可能变了），清掉重来
   brokenThumbs.clear();
   pendingBrokenUrls.clear();
+  // 内容指纹同样作废：新扫描的地址集合可能完全不同
+  contentFp.clear();
+  clearTimeout(contentDedupeTimer);
+  contentDedupeTimer = null;
   // 选中集合按 URL 保留，只剔除本次扫描里已经不存在的地址
   if (selected.size) {
     const alive = new Set(allItems.map((it) => it.url));
@@ -326,6 +386,23 @@ function applyFilter() {
     return true;
   });
 
+  // 同一张图的多种地址（签名参数 / 尺寸参数 / 缩略后缀）以及内容相同的图
+  // （MD5 字节一致）折叠成一条
+  if (state.dedupe && window.IGPDedupe) {
+    const res = window.IGPDedupe.dedupe(list, { content: contentFp });
+    dedupedHidden = res.hidden;
+    // 被折叠的地址若已被选中，把选中态挪到保留下来的那条上，避免重复下载同一张
+    for (const hidden in res.alias) {
+      if (selected.has(hidden)) {
+        selected.delete(hidden);
+        selected.add(res.alias[hidden]);
+      }
+    }
+    list = res.list;
+  } else {
+    dedupedHidden = 0;
+  }
+
   if (state.sort === 'area') {
     list = list.slice().sort((a, b) => (b.w * b.h) - (a.w * a.h));
   } else if (state.sort === 'w') {
@@ -390,6 +467,11 @@ function makeCard(it) {
         <input type="checkbox" aria-label="选择这张图片" />
       </label>
       <span class="tag ${tagCls}"></span>
+      ${
+        it.dupCount > 1
+          ? `<span class="dup-badge" title="同一张图片在页面里有 ${it.dupCount} 个地址，已合并显示（${dupReasonText(it.dupReason)}）">×${it.dupCount}</span>`
+          : ''
+      }
       ${dim ? `<span class="dim">${dim}</span>` : ''}
       <div class="acts">
         <button type="button" data-act="dl" title="下载这张图片">下载</button>
@@ -425,8 +507,9 @@ function makeCard(it) {
       // 缓存命中：不排队、不请求，直接出图
       img.dataset.started = '1';
       img.dataset.queued = '1';
-      applyThumbSrc(img, cached);
+      applyThumbSrc(img, cached.dataUrl);
       markCardGif(card, it.url);
+      applyCachedThumb(it.url, cached);
     }
   }
 
@@ -449,6 +532,20 @@ function syncCard(card, it) {
     markCardGif(card, it.url);
   }
   const thumb = card.querySelector('.thumb');
+  let dupEl = card.querySelector('.dup-badge');
+  const dupN = it.dupCount > 1 ? it.dupCount : 0;
+  if (dupN) {
+    if (!dupEl) {
+      dupEl = document.createElement('span');
+      dupEl.className = 'dup-badge';
+      thumb.appendChild(dupEl);
+    }
+    dupEl.textContent = '×' + dupN;
+    dupEl.title = `同一张图片在页面里有 ${dupN} 个地址，已合并显示`;
+  } else if (dupEl) {
+    dupEl.remove();
+  }
+  if (dupEl && dupN) dupEl.title = dupTitle(it);
   let dimEl = card.querySelector('.dim');
   const dim = it.w && it.h ? `${it.w}×${it.h}` : '';
   if (dim) {
@@ -675,19 +772,30 @@ function onThumbError(img) {
   showThumbFallback(img);
 }
 
-/** 把图放进缓存；按条数和总字节数双重淘汰（GIF 原图可能很大） */
-function rememberThumb(url, dataUrl) {
+/**
+ * 把图放进缓存；按条数和总字节数双重淘汰（GIF 原图可能很大）。
+ * 缓存的是整份结果而不只是图片字符串：重扫后卡片是新建的、缩略图直接命中缓存，
+ * 若只存图片串就会丢掉 MD5，内容查重会在一次重扫后静默失效。
+ */
+function rememberThumb(url, thumb) {
   const prev = thumbCache.get(url);
-  if (prev) thumbCacheBytes -= prev.length;
+  if (prev) thumbCacheBytes -= (prev.dataUrl || '').length;
   thumbCache.delete(url);
-  thumbCache.set(url, dataUrl);
-  thumbCacheBytes += dataUrl.length;
+  thumbCache.set(url, thumb);
+  thumbCacheBytes += (thumb.dataUrl || '').length;
   while (thumbCache.size > THUMB_CACHE_LIMIT || thumbCacheBytes > THUMB_CACHE_BYTES) {
     const oldest = thumbCache.keys().next().value;
     const val = thumbCache.get(oldest);
-    thumbCacheBytes -= val ? val.length : 0;
+    thumbCacheBytes -= val && val.dataUrl ? val.dataUrl.length : 0;
     thumbCache.delete(oldest);
   }
+}
+
+/** 从缓存里恢复一条缩略图结果（含指纹），供重绘时使用 */
+function applyCachedThumb(url, thumb) {
+  if (!thumb || !thumb.dataUrl) return false;
+  recordContent(url, thumb);
+  return true;
 }
 
 /** 切换缩略图来源并触发淡入。命中的是内存 dataURL，不再走网络 */
@@ -710,8 +818,9 @@ function loadThumb(img) {
 
   const cached = thumbCache.get(url);
   if (cached) {
-    applyThumbSrc(img, cached);
+    applyThumbSrc(img, cached.dataUrl);
     markCardGif(img.closest('.card'), url);
+    applyCachedThumb(url, cached);
     return Promise.resolve();
   }
 
@@ -742,7 +851,8 @@ function loadThumb(img) {
 
     if (res && res.ok && res.dataUrl) {
       // 即使元素已经被筛掉，也把结果留给下一次重绘使用
-      rememberThumb(url, res.dataUrl);
+      rememberThumb(url, { dataUrl: res.dataUrl, md5: res.md5 || '' });
+      recordContent(url, res);
       if (res.gif) {
         gifUrls.set(url, !!res.passthrough);
         markCardGif(img.closest('.card'), url);
@@ -826,7 +936,8 @@ function showThumbFallback(img) {
 }
 
 function updateStat() {
-  $('stat').innerHTML = `已选 <b>${selected.size}</b> 张 · 共 <b>${viewItems.length}</b> 张`;
+  const merged = state.dedupe && dedupedHidden ? ` · 合并 <b>${dedupedHidden}</b> 张重复` : '';
+  $('stat').innerHTML = `已选 <b>${selected.size}</b> 张 · 共 <b>${viewItems.length}</b> 张${merged}`;
   $('dlSel').disabled = selected.size === 0;
   const label = $('dlSelLabel');
   if (label) label.textContent = selected.size ? `下载选中 (${selected.size})` : '下载选中';
@@ -947,7 +1058,8 @@ async function downloadItems(list) {
   hideProgressSoon();
   if (res && res.ok && res.state) {
     const s = res.state;
-    toast(`下载完成：成功 ${s.ok}，失败 ${s.fail}`, s.fail ? 'warn' : 'ok');
+    const skip = s.skipped ? `，跳过 ${s.skipped} 张内容重复` : '';
+    toast(`下载完成：成功 ${s.ok}，失败 ${s.fail}${skip}`, s.fail ? 'warn' : 'ok');
     if (s.errors && s.errors.length) {
       console.warn('[图集捕手] 失败明细：', s.errors);
     }
@@ -1023,6 +1135,29 @@ $('zip').addEventListener('click', async () => {
 $('selAll').addEventListener('click', () => {
   viewItems.forEach((it) => selected.add(it.url));
   paintSelection();
+});
+
+// 每个重复组只选分辨率最大的那一张（合并重复开启时才有意义）
+$('selMax').addEventListener('click', () => {
+  if (!viewItems.length) return;
+  selected.clear();
+  const byUrl = new Map(allItems.map((it) => [it.url, it]));
+  let groups = 0;
+  for (const it of viewItems) {
+    if (it.dupCount > 1 && Array.isArray(it.dupUrls) && it.dupUrls.length) {
+      groups++;
+      let best = it;
+      for (const u of it.dupUrls) {
+        const cand = byUrl.get(u);
+        if (cand && cand.w * cand.h > best.w * best.h) best = cand;
+      }
+      selected.add(best.url);
+    } else {
+      selected.add(it.url);
+    }
+  }
+  paintSelection();
+  toast(groups ? `已全选，并从 ${groups} 组重复里各留最大的一张` : '没有发现重复，已全部选中');
 });
 $('selNone').addEventListener('click', () => {
   selected.clear();
@@ -1111,6 +1246,21 @@ function applyThumbSize(size) {
 
 $('thumbSize').addEventListener('input', () => applyThumbSize(Number($('thumbSize').value)));
 $('thumbSize').addEventListener('change', () => persist());
+
+// 合并重复：同一张图的签名/尺寸/缩略地址只显示一条
+$('dedupe').addEventListener('change', () => {
+  state.dedupe = $('dedupe').checked;
+  persist();
+  grid.scrollTop = 0;
+  render();
+  toast(
+    state.dedupe
+      ? dedupedHidden
+        ? `已合并 ${dedupedHidden} 张重复图片`
+        : '没有发现重复图片'
+      : '已显示全部地址（不再合并重复）'
+  );
+});
 
 // 隐藏预览失败的图片：纯视图筛选，不重新扫描
 $('hideBroken').addEventListener('change', () => {
@@ -1255,6 +1405,7 @@ function persist() {
       thorough: state.thorough,
       thumbSize: state.thumbSize,
       hideBroken: state.hideBroken,
+      dedupe: state.dedupe,
       theme: state.theme
     });
     chrome.storage.local.set({ uiState: ui });
@@ -1275,6 +1426,7 @@ async function boot() {
     thorough: !!ui.thorough,
     thumbSize: ui.thumbSize || 116,
     hideBroken: !!ui.hideBroken,
+    dedupe: ui.dedupe !== false,
     theme: ui.theme === 'dark' ? 'dark' : 'light'
   });
   $('q').value = state.q;
@@ -1289,6 +1441,7 @@ async function boot() {
   applyThumbSize(state.thumbSize);
   applyTheme(state.theme, { persist: false });
   if ($('hideBroken')) $('hideBroken').checked = state.hideBroken;
+  if ($('dedupe')) $('dedupe').checked = state.dedupe;
 
   // boot 里任何一步出错都不能让界面停在"全空白无提示"的状态
   try {

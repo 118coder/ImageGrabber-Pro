@@ -43,8 +43,46 @@ function png(w, h, seed) {
 }
 const IMG = png(600, 400, 4);
 
+/**
+ * 高频细棋盘图：缩到 9×8 采样后对比度几乎为 0。
+ * 这类图不会被"画面一致"查重合并——本用例要测的是渲染与调度，
+ * 卡片被合并掉就测不到东西了。（原来的固定 IMG 会被正确判为重复）
+ */
+function noisePng(w, h, seed) {
+  const raw = Buffer.alloc((w * 3 + 1) * h);
+  for (let y = 0; y < h; y++) {
+    raw[y * (w * 3 + 1)] = 0;
+    for (let x = 0; x < w; x++) {
+      const o = y * (w * 3 + 1) + 1 + x * 3;
+      const v = (((x >> 1) + (y >> 1) + seed) & 1) ? 240 : 20;
+      raw[o] = v;
+      raw[o + 1] = v;
+      raw[o + 2] = v;
+    }
+  }
+  const ih = Buffer.alloc(13);
+  ih.writeUInt32BE(w, 0);
+  ih.writeUInt32BE(h, 4);
+  ih[8] = 8;
+  ih[9] = 2;
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ih),
+    chunk('IDAT', zlib.deflateSync(raw)),
+    chunk('IEND', Buffer.alloc(0))
+  ]);
+}
+
+
 const server = http.createServer((req, res) => {
   if (/missing/.test(req.url)) { res.writeHead(404); res.end('404'); return; }
+  const vm = /\/v(\d+)\.png/.exec(req.url);
+  if (vm) {
+    // 每个地址给一张画面不同的图：内容相同的话会被查重合并，测的就不是图库渲染了
+    res.writeHead(200, { 'Content-Type': 'image/png' });
+    res.end(noisePng(600, 400, Number(vm[1])));
+    return;
+  }
   if (/\.png/.test(req.url)) { res.writeHead(200, { 'Content-Type': 'image/png' }); res.end(IMG); return; }
   const imgs = Array.from({ length: 12 }, (_, i) => `<img src="/v${i}.png" width="600" height="400">`).join('');
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -107,7 +145,7 @@ const isDark = (s) => (s.match(/\d+/g) || []).map(Number).reduce((a, v, i) => a 
   ], { stdio: ['ignore', 'ignore', logF] });
 
   try {
-    const sw = await waitFor(async () => (await list()).find((t) => t.type === 'service_worker' && /background\.js/.test(t.url)), 45000, 'sw');
+    const sw = await waitFor(async () => (await list()).find((t) => t.type === 'service_worker' && /\/src\/background\.js$/.test(t.url)), 45000, 'sw');
     const extId = sw.url.match(/chrome-extension:\/\/([^/]+)/)[1];
     const b = await conn((await (await fetch(`http://127.0.0.1:${DEBUG_PORT}/json/version`)).json()).webSocketDebuggerUrl, true);
 

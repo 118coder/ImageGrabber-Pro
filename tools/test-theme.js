@@ -135,7 +135,7 @@ function contrast(fg, bg) {
   ], { stdio: ['ignore', 'ignore', logF] });
 
   try {
-    const sw = await waitFor(async () => (await list()).find((t) => t.type === 'service_worker' && /background\.js/.test(t.url)), 45000, 'sw');
+    const sw = await waitFor(async () => (await list()).find((t) => t.type === 'service_worker' && /\/src\/background\.js$/.test(t.url)), 45000, 'sw');
     const extId = sw.url.match(/chrome-extension:\/\/([^/]+)/)[1];
     const b = await conn((await (await fetch(`http://127.0.0.1:${DEBUG_PORT}/json/version`)).json()).webSocketDebuggerUrl, true);
     const pt = await b.send('Target.createTarget', { url: `http://127.0.0.1:${PORT}/`, background: false });

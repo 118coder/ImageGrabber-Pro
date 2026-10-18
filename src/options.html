@@ -147,8 +147,10 @@
           <div class="ctrl"><input type="number" id="concurrency" min="1" max="12" step="1" /></div>
         </div>
         <div class="vars">
-          可用变量：<code>{name}</code> <code>{ext}</code> <code>{index}</code> <code>{w}</code> <code>{h}</code>
+          可用变量：<code>{name}</code> <code>{file}</code> <code>{ext}</code> <code>{index}</code> <code>{w}</code> <code>{h}</code>
           <code>{size}</code> <code>{alt}</code> <code>{host}</code> <code>{date}</code> <code>{kind}</code>
+          <br /><code>{name}</code> 就是面板上显示的名字（地址只是 UUID 时用页面上的名字）；
+          <code>{file}</code> 是地址里的原始文件名。
           <br />例：<code>{host}_{index}_{w}x{h}</code> → <code>example.com_03_1920x1080.jpg</code>
         </div>
       </div>

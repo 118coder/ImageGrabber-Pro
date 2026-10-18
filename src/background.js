@@ -12,6 +12,9 @@
  *   · ZIP 打包（交给 offscreen 做，SW 里没有 createObjectURL）
  * =========================================================================== */
 
+// 重复图片合并 + 图片命名：与弹窗/图库共用同一份逻辑
+importScripts('dedupe.js', 'naming.js');
+
 const OFFSCREEN_PATH = 'src/offscreen.html';
 const DEFAULTS = {
   minWidth: 0,
@@ -372,23 +375,36 @@ function pageHostOf(item) {
 function buildFilename(item, settings, index) {
   settings = settings || DEFAULTS;
   const host = pageHostOf(item);
-  let base = baseNameFromUrl(item.url);
-  let ext = extFromUrl(item.url);
+  const rawUrlName = baseNameFromUrl(item.url); // 地址里的原始文件名，供 {file} 使用
+  const rawUrlExt = extFromUrl(item.url);
+
+  // 与面板显示同名：地址只是 UUID/哈希时，用页面上的名字（alt）代替
+  const picked = typeof IGPName !== 'undefined' ? IGPName.choose(item) : null;
+  let base = picked && picked.base ? picked.base : '';
+  let ext = picked && picked.ext ? picked.ext : '';
+  if (!base) {
+    base = rawUrlName;
+    ext = rawUrlExt;
+    if (base && ext) base = base.slice(0, base.length - ext.length);
+  }
 
   if (!base) {
     const kindName = { canvas: 'canvas', media: 'video-frame', 'svg-inline': 'vector', img: 'image' };
     base = (kindName[item.kind] || 'image') + '-' + pad(((index - 1) % 999) + 1);
     if (item.kind === 'svg-inline' && !ext) ext = '.svg';
     if ((item.kind === 'canvas' || item.kind === 'media') && !ext) ext = '.png';
-  } else if (ext) {
-    base = base.slice(0, base.length - ext.length);
   }
   base = base.replace(/[\\/:*?"<>|]+/g, '_').slice(0, 100);
+
+  let fileBase = rawUrlName;
+  if (fileBase && rawUrlExt) fileBase = fileBase.slice(0, fileBase.length - rawUrlExt.length);
+  fileBase = fileBase.replace(/[\\/:*?"<>|]+/g, '_').slice(0, 100);
 
   const w = item.w || 0;
   const h = item.h || 0;
   const vars = {
     name: base,
+    file: fileBase,
     ext: ext.replace(/^\./, ''),
     index: String(index),
     w: String(w),
@@ -464,6 +480,14 @@ async function downloadOne(item, index, ctx) {
       offscreenCall({ type: 'FETCH', url: item.url, wantDataUrl: false, timeout: ctx.timeout || 45000 })
     );
     if (fetched && fetched.ok && fetched.objectUrl) {
+      // 这一批里已经存过内容完全相同的图（换地址/换文件名的同一张）：不再存第二份
+      if (fetched.md5 && ctx.seenHashes) {
+        if (ctx.seenHashes.has(fetched.md5)) {
+          setTimeout(() => offscreenCall({ type: 'RELEASE', objectUrl: fetched.objectUrl, delay: 0 }).catch(() => {}), 5000);
+          return { ok: true, skipped: true, via: 'dup-content', size: fetched.size };
+        }
+        ctx.seenHashes.add(fetched.md5);
+      }
       let name = filename;
       if (fetched.ext && !/\.[a-zA-Z0-9]{2,5}$/.test(name)) name += '.' + fetched.ext;
       const saved = await downloadViaUrl(fetched.objectUrl, name);
@@ -581,12 +605,13 @@ async function runBatch(tabId, items, opts) {
   const settings = await getSettings();
   const concurrency = Math.max(1, Math.min(12, opts.concurrency || settings.concurrency || 4));
   const jobId = 'job_' + Date.now();
-  const state = { done: 0, total: items.length, ok: 0, fail: 0, errors: [], canceled: false, via: {} };
+  const state = { done: 0, total: items.length, ok: 0, fail: 0, skipped: 0, errors: [], canceled: false, via: {} };
   running.set(jobId, state);
   broadcast({ type: 'IGP_PROGRESS', jobId, done: 0, total: items.length, phase: 'start' });
 
   const queue = items.map((item, i) => ({ item, i }));
-  const ctx = { settings, tabId, timeout: 45000 };
+  // 一批里如果有多张图字节完全相同（换地址/换名字的同一张图），只存第一份
+  const ctx = { settings, tabId, timeout: 45000, seenHashes: new Set() };
 
   async function worker() {
     for (;;) {
@@ -602,9 +627,13 @@ async function runBatch(tabId, items, opts) {
       }
       state.done++;
       if (res && res.ok) {
-        state.ok++;
-        const v = res.via || 'direct';
-        state.via[v] = (state.via[v] || 0) + 1;
+        if (res.skipped) {
+          state.skipped++;
+        } else {
+          state.ok++;
+          const v = res.via || 'direct';
+          state.via[v] = (state.via[v] || 0) + 1;
+        }
       } else {
         state.fail++;
         if (state.errors.length < 30) {
@@ -718,9 +747,10 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
         const settings = await getSettings();
         const filtered = filterItems(res.items, settings);
         const state = await runBatch(tab.id, filtered, { settings });
+        const extra = state.skipped ? `，跳过 ${state.skipped} 张内容重复` : '';
         broadcast({
           type: 'IGP_TOAST',
-          text: `下载完成：成功 ${state.ok} / 失败 ${state.fail}`,
+          text: `下载完成：成功 ${state.ok} / 失败 ${state.fail}${extra}`,
           kind: state.fail ? 'warn' : 'ok'
         });
         break;
@@ -741,7 +771,7 @@ async function thoroughDefault() {
 function filterItems(items, settings) {
   const minW = settings.minWidth || 0;
   const minH = settings.minHeight || 0;
-  return items.filter((it) => {
+  const kept = items.filter((it) => {
     if (!settings.includeProbable && it.probable) return false;
     if (it.kind === 'canvas' || it.kind === 'media') return true;
     if (minW && it.w && it.w < minW) return false;
@@ -749,6 +779,9 @@ function filterItems(items, settings) {
     if (!settings.includeTiny && it.w === 1 && it.h === 1) return false;
     return true;
   });
+  // 同一张图的多种地址只下载一次（弹窗里关掉"合并重复"也不会让右键批量下载重复存图）
+  if (typeof IGPDedupe === 'undefined') return kept;
+  return IGPDedupe.dedupe(kept).list;
 }
 
 // ------------------------------------------------------------------ 消息路由
@@ -829,6 +862,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   h: inPage.h,
                   passthrough: !!inPage.passthrough,
                   gif: !!inPage.gif,
+                  md5: inPage.md5 || '',
+                  srcW: inPage.srcW || 0,
+                  srcH: inPage.srcH || 0,
                   via: inPage.via || 'page'
                 };
               } else if (inPage && inPage.pending) {
@@ -863,6 +899,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   h: result.h,
                   passthrough: !!result.passthrough,
                   gif: !!result.gif,
+                  md5: result.md5 || '',
                   via: 'offscreen'
                 };
               } else {

@@ -49,6 +49,37 @@ function png(w, h, seed) {
   return Buffer.concat([Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]), chunk('IHDR', ih), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
 }
 const IMG = png(800, 600, 9);
+
+/**
+ * 高频细棋盘图：缩到 9×8 采样后对比度几乎为 0。
+ * 这类图不会被"画面一致"查重合并——本用例要测的是渲染与调度，
+ * 卡片被合并掉就测不到东西了。（原来的固定 IMG 会被正确判为重复）
+ */
+function noisePng(w, h, seed) {
+  const raw = Buffer.alloc((w * 3 + 1) * h);
+  for (let y = 0; y < h; y++) {
+    raw[y * (w * 3 + 1)] = 0;
+    for (let x = 0; x < w; x++) {
+      const o = y * (w * 3 + 1) + 1 + x * 3;
+      const v = (((x >> 1) + (y >> 1) + seed) & 1) ? 240 : 20;
+      raw[o] = v;
+      raw[o + 1] = v;
+      raw[o + 2] = v;
+    }
+  }
+  const ih = Buffer.alloc(13);
+  ih.writeUInt32BE(w, 0);
+  ih.writeUInt32BE(h, 4);
+  ih[8] = 8;
+  ih[9] = 2;
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ih),
+    chunk('IDAT', zlib.deflateSync(raw)),
+    chunk('IEND', Buffer.alloc(0))
+  ]);
+}
+
 const hits = {};
 const server = http.createServer((req, res) => {
   const fm = /\/fast(\d+)\.png/.exec(req.url);
@@ -56,7 +87,8 @@ const server = http.createServer((req, res) => {
     const key = 'fast' + fm[1];
     hits[key] = (hits[key] || 0) + 1;
     res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=600' });
-    res.end(IMG);
+    // 每张图画面不同：内容相同会被查重合并，卡片数对不上
+    res.end(noisePng(800, 600, Number(fm[1])));
     return;
   }
   // 慢图放到独立 origin，避免 6 条 HTTP/1.1 连接把快图的下载也堵住
@@ -85,7 +117,7 @@ const slowServer = http.createServer((req, res) => {
       'Access-Control-Allow-Origin': `http://127.0.0.1:${PORT}`,
       'Access-Control-Allow-Credentials': 'true'
     });
-    res.end(IMG);
+    res.end(noisePng(800, 600, Number(m[1]) + 20));
   }, DELAY);
 });
 
@@ -145,7 +177,7 @@ function check(name, cond, extra) {
   ], { stdio: ['ignore', 'ignore', logF] });
 
   try {
-    const sw = await waitFor(async () => (await list()).find((t) => t.type === 'service_worker' && /background\.js/.test(t.url)), 45000, 'sw');
+    const sw = await waitFor(async () => (await list()).find((t) => t.type === 'service_worker' && /\/src\/background\.js$/.test(t.url)), 45000, 'sw');
     const extId = sw.url.match(/chrome-extension:\/\/([^/]+)/)[1];
     const b = await conn((await (await fetch(`http://127.0.0.1:${DEBUG_PORT}/json/version`)).json()).webSocketDebuggerUrl, true);
 

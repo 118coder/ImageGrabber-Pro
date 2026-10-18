@@ -225,6 +225,36 @@
     return Array.from(this.map.values());
   };
 
+  /**
+   * 页面上能读到的"这个图叫什么"。alt 之外还会看 title / aria-label / data-*：
+   * 不少站点的图片地址只是存服务的 UUID，真正有意义的名字在这些属性里。
+   * 只用来显示与命名（不参与地址判断），所以可以放心放宽。
+   */
+  function nameFromElement(el) {
+    if (!el || !el.getAttribute) return '';
+    const attrs = [
+      'alt',
+      'title',
+      'aria-label',
+      'data-name',
+      'data-title',
+      'data-filename',
+      'data-file-name',
+      'data-image-name',
+      'data-img-name',
+      'data-caption'
+    ];
+    for (const a of attrs) {
+      const v = el.getAttribute(a);
+      if (!v) continue;
+      const s = String(v).trim();
+      if (!s || s.length > 80) continue;
+      if (/^(?:https?:|\/\/|data:|blob:)/i.test(s)) continue; // 有的站点往这些属性里塞地址
+      return s;
+    }
+    return '';
+  }
+
   // ---------------------------------------------------------------- 各来源扫描
   function scanImgElements(col, ctx) {
     const imgs = qsa('img');
@@ -235,7 +265,7 @@
       const attrH = parseInt(el.getAttribute('height'), 10) || 0;
       const w = el.naturalWidth || el.width || attrW || 0;
       const h = el.naturalHeight || el.height || attrH || 0;
-      const alt = el.getAttribute('alt') || '';
+      const alt = nameFromElement(el);
       const candidates = [];
 
       // srcset 优先取最大的一张
@@ -559,7 +589,7 @@
         makeItem(level === 2 ? 'lazy' : 'attr', u, {
           probable: level === 1,
           label: tag.toLowerCase() + '@' + name,
-          alt: el.getAttribute && (el.getAttribute('alt') || '') || ''
+          alt: nameFromElement(el)
         })
       );
       rememberElement(u, el);
@@ -1029,7 +1059,142 @@
         } catch (_) {
           return null;
         }
-        return { dataUrl, w, h };
+        return { dataUrl, w, h, srcW, srcH };
+      } catch (_) {
+        /* 跨域/不支持：走下面的普通路径 */
+      }
+    }
+    return downsample(img, srcW, srcH, maxSide, quality);
+  }
+
+  /** 把已经解码好的图像源（img/canvas/bitmap）降采样成 WebP dataURL */
+  /**
+   * 从已解码的 <img> 生成缩略图。
+   * 优先用 createImageBitmap(img, {resizeWidth, resizeHeight})：让解码器直接输出目标尺寸，
+   * 省掉"整张大图先画进 canvas 再缩放"的那一步（对大图尤其明显）。
+   * 不支持时退回普通 downsample。
+   */
+  async function downsampleImageElement(img, maxSide, quality) {
+    const srcW = img.naturalWidth;
+    const srcH = img.naturalHeight;
+    if (!srcW || !srcH) return null;
+    const scale = Math.min(1, maxSide / Math.max(srcW, srcH));
+    const w = Math.max(1, Math.round(srcW * scale));
+    const h = Math.max(1, Math.round(srcH * scale));
+
+    // 只缩小不放大：原图本来就小的时候没必要走位图缩放
+    if (scale < 0.98 && typeof createImageBitmap === 'function') {
+      try {
+        const bmp = await createImageBitmap(img, {
+          resizeWidth: w,
+          resizeHeight: h,
+          resizeQuality: 'high'
+        });
+        const canvas = makeCanvas(w, h);
+        canvas.getContext('2d', { alpha: true }).drawImage(bmp, 0, 0);
+        try {
+          bmp.close();
+        } catch (_) {
+          /* ignore */
+        }
+        let dataUrl = '';
+        try {
+          dataUrl = canvas.toDataURL('image/webp', quality == null ? 0.72 : quality);
+          if (!/^data:image\/(webp|png)/.test(dataUrl)) dataUrl = canvas.toDataURL('image/png');
+        } catch (_) {
+          return null;
+        }
+        return { dataUrl, w, h, srcW, srcH };
+      } catch (_) {
+        /* 跨域/不支持：走下面的普通路径 */
+      }
+    }
+    return downsample(img, srcW, srcH, maxSide, quality);
+  }
+
+  /** 把已经解码好的图像源（img/canvas/bitmap）降采样成 WebP dataURL */
+  /**
+   * 从已解码的 <img> 生成缩略图。
+   * 优先用 createImageBitmap(img, {resizeWidth, resizeHeight})：让解码器直接输出目标尺寸，
+   * 省掉"整张大图先画进 canvas 再缩放"的那一步（对大图尤其明显）。
+   * 不支持时退回普通 downsample。
+   */
+  async function downsampleImageElement(img, maxSide, quality) {
+    const srcW = img.naturalWidth;
+    const srcH = img.naturalHeight;
+    if (!srcW || !srcH) return null;
+    const scale = Math.min(1, maxSide / Math.max(srcW, srcH));
+    const w = Math.max(1, Math.round(srcW * scale));
+    const h = Math.max(1, Math.round(srcH * scale));
+
+    // 只缩小不放大：原图本来就小的时候没必要走位图缩放
+    if (scale < 0.98 && typeof createImageBitmap === 'function') {
+      try {
+        const bmp = await createImageBitmap(img, {
+          resizeWidth: w,
+          resizeHeight: h,
+          resizeQuality: 'high'
+        });
+        const canvas = makeCanvas(w, h);
+        canvas.getContext('2d', { alpha: true }).drawImage(bmp, 0, 0);
+        try {
+          bmp.close();
+        } catch (_) {
+          /* ignore */
+        }
+        let dataUrl = '';
+        try {
+          dataUrl = canvas.toDataURL('image/webp', quality == null ? 0.72 : quality);
+          if (!/^data:image\/(webp|png)/.test(dataUrl)) dataUrl = canvas.toDataURL('image/png');
+        } catch (_) {
+          return null;
+        }
+        return { dataUrl, w, h, srcW, srcH };
+      } catch (_) {
+        /* 跨域/不支持：走下面的普通路径 */
+      }
+    }
+    return downsample(img, srcW, srcH, maxSide, quality);
+  }
+
+  /** 把已经解码好的图像源（img/canvas/bitmap）降采样成 WebP dataURL */
+  /**
+   * 从已解码的 <img> 生成缩略图。
+   * 优先用 createImageBitmap(img, {resizeWidth, resizeHeight})：让解码器直接输出目标尺寸，
+   * 省掉"整张大图先画进 canvas 再缩放"的那一步（对大图尤其明显）。
+   * 不支持时退回普通 downsample。
+   */
+  async function downsampleImageElement(img, maxSide, quality) {
+    const srcW = img.naturalWidth;
+    const srcH = img.naturalHeight;
+    if (!srcW || !srcH) return null;
+    const scale = Math.min(1, maxSide / Math.max(srcW, srcH));
+    const w = Math.max(1, Math.round(srcW * scale));
+    const h = Math.max(1, Math.round(srcH * scale));
+
+    // 只缩小不放大：原图本来就小的时候没必要走位图缩放
+    if (scale < 0.98 && typeof createImageBitmap === 'function') {
+      try {
+        const bmp = await createImageBitmap(img, {
+          resizeWidth: w,
+          resizeHeight: h,
+          resizeQuality: 'high'
+        });
+        const canvas = makeCanvas(w, h);
+        canvas.getContext('2d', { alpha: true }).drawImage(bmp, 0, 0);
+        try {
+          bmp.close();
+        } catch (_) {
+          /* ignore */
+        }
+        let dataUrl = '';
+        try {
+          dataUrl = canvas.toDataURL('image/webp', quality == null ? 0.72 : quality);
+          if (!/^data:image\/(webp|png)/.test(dataUrl)) dataUrl = canvas.toDataURL('image/png');
+        } catch (_) {
+          return null;
+        }
+        return { dataUrl, w, h, srcW, srcH };
       } catch (_) {
         /* 跨域/不支持：走下面的普通路径 */
       }
@@ -1055,7 +1220,7 @@
     } catch (_) {
       return null;
     }
-    return { dataUrl, w, h };
+    return { dataUrl, w, h, srcW, srcH };
   }
 
   function readBlobAsDataUrl(blob) {
@@ -1138,6 +1303,17 @@
     });
   }
 
+  /** 原始字节的 MD5：只有真拿到字节时才算了（页面缓存通道），上限 8MB 免得白烧 CPU */
+  const MD5_MAX_BYTES = 8 * 1024 * 1024;
+  async function md5OfBlob(blob) {
+    if (typeof IGPHash === 'undefined' || !blob || !blob.size || blob.size > MD5_MAX_BYTES) return '';
+    try {
+      return IGPHash.md5(new Uint8Array(await blob.arrayBuffer()));
+    } catch (_) {
+      return '';
+    }
+  }
+
   async function thumbFromFetch(url, maxSide, quality) {
     // cache: 'force-cache' 让浏览器优先用已有副本；页面分区下基本等于零流量
     const res = await fetch(url, { credentials: 'include', cache: 'force-cache' });
@@ -1154,14 +1330,23 @@
         passthrough: true,
         gif: true,
         size: blob.size,
-        type
+        type,
+        md5: await md5OfBlob(blob)
       };
     }
 
     // SVG 无法可靠地用 canvas 采样（且通常很小），直接返回原数据
     if (/svg/.test(type) || blob.size < 3000) {
-      return { dataUrl: await readBlobAsDataUrl(blob), passthrough: true, gif: isGif, size: blob.size };
+      return {
+        dataUrl: await readBlobAsDataUrl(blob),
+        passthrough: true,
+        gif: isGif,
+        size: blob.size,
+        md5: await md5OfBlob(blob)
+      };
     }
+
+    const md5 = await md5OfBlob(blob);
 
     let bmp = null;
     try {
@@ -1180,6 +1365,7 @@
       if (out) {
         out.srcBytes = blob.size;
         out.gif = isGif; // 超过预览上限的 GIF：静态首帧 + GIF 标记
+        out.md5 = md5;
         return out;
       }
     }
@@ -1195,6 +1381,7 @@
         if (out) {
           out.srcBytes = blob.size;
           out.gif = isGif;
+          out.md5 = md5;
           return out;
         }
       } else {
@@ -1205,7 +1392,13 @@
     }
 
     // 最后兜底：原样返回字节（弹窗里 <img> 也许能显示，只是不降采样）
-    return { dataUrl: await readBlobAsDataUrl(blob), passthrough: true, gif: isGif, size: blob.size };
+    return {
+      dataUrl: await readBlobAsDataUrl(blob),
+      passthrough: true,
+      gif: isGif,
+      size: blob.size,
+      md5
+    };
   }
 
   async function makeThumb(msg) {
@@ -1216,7 +1409,17 @@
     const key = url + '|' + maxSide;
     const hit = thumbMemo.get(key);
     if (hit) {
-      return { ok: true, dataUrl: hit.dataUrl, w: hit.w, h: hit.h, gif: !!hit.gif, cached: true };
+      return {
+        ok: true,
+        dataUrl: hit.dataUrl,
+        w: hit.w,
+        h: hit.h,
+        gif: !!hit.gif,
+        md5: hit.md5 || '',
+        srcW: hit.srcW || 0,
+        srcH: hit.srcH || 0,
+        cached: true
+      };
     }
 
     // 页面里的原图还在下载：立即让出后台并发槽，弹窗稍后重试。
@@ -1230,9 +1433,29 @@
     // GIF 跳过这条（canvas 只能拿首帧），走 fetch 保留原始动画。
     const direct = looksLikeGif(url) ? null : await thumbFromElement(url, maxSide, quality);
     if (direct && direct.dataUrl) {
+      // 这条路径读的是已经解码好的像素，手上没有原始文件字节，因此没有 MD5。
+      // 不去用"缩略图字节"凑一个哈希：那不是文件的 MD5，尺寸一变就对不上，
+      // 而内容相差很小的两张图缩到同一尺寸后反而可能撞上——两头都不可靠。
+      // 同源图仍然会按归一化地址合并（签名/尺寸参数、缩略后缀都算在内）。
       if (thumbMemo.size > 400) thumbMemo.clear();
-      thumbMemo.set(key, { dataUrl: direct.dataUrl, w: direct.w, h: direct.h, gif: false });
-      return { ok: true, dataUrl: direct.dataUrl, w: direct.w, h: direct.h, gif: false, via: 'element' };
+      thumbMemo.set(key, {
+        dataUrl: direct.dataUrl,
+        w: direct.w,
+        h: direct.h,
+        gif: false,
+        srcW: direct.srcW || 0,
+        srcH: direct.srcH || 0
+      });
+      return {
+        ok: true,
+        dataUrl: direct.dataUrl,
+        w: direct.w,
+        h: direct.h,
+        gif: false,
+        srcW: direct.srcW || 0,
+        srcH: direct.srcH || 0,
+        via: 'element'
+      };
     }
 
     // 2) 走页面分区的 HTTP 缓存
@@ -1247,7 +1470,10 @@
               dataUrl: fetched.dataUrl,
               w: fetched.w,
               h: fetched.h,
-              gif: !!fetched.gif
+              gif: !!fetched.gif,
+              md5: fetched.md5 || '',
+              srcW: fetched.srcW || 0,
+              srcH: fetched.srcH || 0
             });
           }
           return {
@@ -1257,6 +1483,9 @@
             h: fetched.h,
             passthrough: !!fetched.passthrough,
             gif: !!fetched.gif,
+            md5: fetched.md5 || '',
+            srcW: fetched.srcW || 0,
+            srcH: fetched.srcH || 0,
             via: 'page-cache'
           };
         }
