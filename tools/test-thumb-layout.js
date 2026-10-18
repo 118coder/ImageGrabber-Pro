@@ -178,7 +178,7 @@ function check(name, cond, extra) {
 
   try {
     const sw = await waitFor(
-      async () => (await list()).find((t) => t.type === 'service_worker' && /background\.js/.test(t.url)),
+      async () => (await list()).find((t) => t.type === 'service_worker' && /\/src\/background\.js$/.test(t.url)),
       45000,
       '扩展 Service Worker'
     );

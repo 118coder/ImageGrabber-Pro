@@ -101,6 +101,11 @@
           <span class="switch" aria-hidden="true"></span>
           <span>疑似</span>
         </label>
+        <label class="switch-chip compact" title="合并重复：同一张图的签名 / 尺寸 / 缩略地址只显示一条">
+          <input type="checkbox" id="dedupe" />
+          <span class="switch" aria-hidden="true"></span>
+          <span>合并重复</span>
+        </label>
         <label class="switch-chip compact" title="隐藏预览加载失败的图片">
           <input type="checkbox" id="hideBroken" />
           <span class="switch" aria-hidden="true"></span>
@@ -156,6 +161,8 @@
     </footer>
 
     <div class="toast" id="toast" hidden></div>
+    <script src="dedupe.js"></script>
+    <script src="naming.js"></script>
     <script src="viewer.js"></script>
   </body>
 </html>

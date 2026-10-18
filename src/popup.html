@@ -114,6 +114,8 @@
         <button type="button" class="link-btn" id="selInvert">反选</button>
         <span class="link-sep" aria-hidden="true"></span>
         <button type="button" class="link-btn" id="selBig">仅选大图 ≥800</button>
+        <span class="link-sep" aria-hidden="true"></span>
+        <button type="button" class="link-btn" id="selMax" title="每个重复组只选分辨率最大的那一张">每组最大</button>
       </div>
 
       <div class="quick-right">
@@ -121,6 +123,11 @@
           <input type="checkbox" id="susp" />
           <span class="switch" aria-hidden="true"></span>
           <span>疑似</span>
+        </label>
+        <label class="switch-chip compact" title="合并重复：同一张图的签名 / 尺寸 / 缩略地址只显示一条">
+          <input type="checkbox" id="dedupe" />
+          <span class="switch" aria-hidden="true"></span>
+          <span>合并重复</span>
         </label>
         <label class="switch-chip compact" title="隐藏预览加载失败的图片（地址已失效或被图床拒绝）">
           <input type="checkbox" id="hideBroken" />
@@ -178,6 +185,8 @@
     </footer>
 
     <div class="toast" id="toast" hidden role="status"></div>
+    <script src="dedupe.js"></script>
+    <script src="naming.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>

@@ -14,10 +14,41 @@ let pageUrl = '';
 let handoffId = new URLSearchParams(location.search).get('id') || '';
 let settings = {};
 
-const state = { q: '', minSize: 120, typeFilter: 'all', sort: 'area', susp: false, thumbSize: 116, hideBroken: false, theme: 'light' };
+const state = { q: '', minSize: 120, typeFilter: 'all', sort: 'area', susp: false, thumbSize: 116, hideBroken: false, dedupe: true, theme: 'light' };
 
 /** 预览失败的条目（url → 原因），供"隐藏失效"筛选 */
 const brokenThumbs = new Map();
+
+/** 上一轮"合并重复"折叠掉的条目数 */
+let dedupedHidden = 0;
+
+/** 内容指纹（缩略图顺手算出）：url → {md5} */
+const contentFp = new Map();
+let contentDedupeTimer = null;
+
+
+function dupReasonText(reason) {
+  return reason === 'md5' ? '字节完全相同（MD5 一致）' : '地址只是参数不同';
+}
+
+function recordContent(url, res) {
+  const md5 = res.md5 || '';
+  if (!md5) return;
+  const prev = contentFp.get(url);
+  if (prev && prev.md5 === md5) return;
+  contentFp.set(url, { md5 });
+  if (!state.dedupe) return;
+  // 真·防抖：缩略图是分批出来的，必须在最后一张到达后再跑一次，
+  // 否则先到的那几张跑完就再也不会重新判重了
+  clearTimeout(contentDedupeTimer);
+  contentDedupeTimer = setTimeout(() => {
+    contentDedupeTimer = null;
+    const before = viewItems.length;
+    applyFilter();
+    if (viewItems.length !== before) render();
+    else paint();
+  }, 700);
+}
 
 function sendBg(msg, timeoutMs) {
   return new Promise((resolve) => {
@@ -74,13 +105,19 @@ const KIND_LABEL = {
 };
 
 function fmtName(it) {
-  if (it.url.startsWith('data:')) return it.alt || (it.kind === 'svg-inline' ? '内联 SVG' : '内联图片');
-  if (/^(canvas|video):\/\//.test(it.url)) return it.kind === 'canvas' ? 'Canvas 画布内容' : '视频当前帧';
+  const u = String(it.url || '');
+  if (u.startsWith('data:')) return it.alt || (it.kind === 'svg-inline' ? '内联 SVG' : '内联图片');
+  if (/^(canvas|video):\/\//.test(u)) return it.kind === 'canvas' ? 'Canvas 画布内容' : '视频当前帧';
+  // 面板显示的名字 = 下载落盘的名字
+  if (window.IGPName) {
+    const n = window.IGPName.filename(it);
+    if (n) return n;
+  }
   try {
-    const p = new URL(it.url);
+    const p = new URL(u);
     return (it.alt ? it.alt + ' · ' : '') + decodeURIComponent(p.pathname.split('/').filter(Boolean).pop() || p.host);
   } catch (_) {
-    return it.url.slice(0, 70);
+    return u.slice(0, 70);
   }
 }
 
@@ -120,6 +157,21 @@ function applyFilter() {
     if (q && (it.url + ' ' + (it.alt || '') + ' ' + (it.label || '')).toLowerCase().indexOf(q) === -1) return false;
     return true;
   });
+  // 同一张图的多种地址 + MD5 字节相同的图折叠成一条
+  if (state.dedupe && window.IGPDedupe) {
+    const res = window.IGPDedupe.dedupe(list, { content: contentFp });
+    dedupedHidden = res.hidden;
+    for (const hidden in res.alias) {
+      if (selected.has(hidden)) {
+        selected.delete(hidden);
+        selected.add(res.alias[hidden]);
+      }
+    }
+    list = res.list;
+  } else {
+    dedupedHidden = 0;
+  }
+
   if (state.sort === 'area') list.sort((a, b) => b.w * b.h - a.w * a.h);
   else if (state.sort === 'w') list.sort((a, b) => (b.w || 0) - (a.w || 0));
   else if (state.sort === 'kind') list.sort((a, b) => kindGroup(a.kind).localeCompare(kindGroup(b.kind)));
@@ -151,6 +203,11 @@ function render() {
           }
           <label class="chk" title="选择这张图片"><input type="checkbox" data-i="${i}" aria-label="选择这张图片" /></label>
           <span class="tag ${tagCls}">${KIND_LABEL[it.kind] || it.kind}</span>
+          ${
+            it.dupCount > 1
+              ? `<span class="dup-badge" title="同一张图片在页面里有 ${it.dupCount} 个地址，已合并显示（${dupReasonText(it.dupReason)}）">×${it.dupCount}</span>`
+              : ''
+          }
           ${dim ? `<span class="dim">${dim}</span>` : ''}
           <div class="acts">
             <button type="button" data-act="dl" data-i="${i}">下载</button>
@@ -178,17 +235,17 @@ const boundThumbs = new WeakSet();
 const MAX_PENDING_RETRIES = 30;
 let brokenRenderTimer = null;
 
-/** 按条数与总字节数双重淘汰（GIF 原图可能很大） */
-function rememberThumb(key, dataUrl) {
+/** 按条数与总字节数双重淘汰（GIF 原图可能很大）。存整份结果，指纹不能丢 */
+function rememberThumb(key, thumb) {
   const prev = thumbCache.get(key);
-  if (prev) thumbCacheBytes -= prev.length;
+  if (prev) thumbCacheBytes -= (prev.dataUrl || '').length;
   thumbCache.delete(key);
-  thumbCache.set(key, dataUrl);
-  thumbCacheBytes += dataUrl.length;
+  thumbCache.set(key, thumb);
+  thumbCacheBytes += (thumb.dataUrl || '').length;
   while (thumbCache.size > 800 || thumbCacheBytes > THUMB_CACHE_BYTES) {
     const oldest = thumbCache.keys().next().value;
     const val = thumbCache.get(oldest);
-    thumbCacheBytes -= val ? val.length : 0;
+    thumbCacheBytes -= val && val.dataUrl ? val.dataUrl.length : 0;
     thumbCache.delete(oldest);
   }
 }
@@ -258,9 +315,11 @@ function loadThumb(img) {
 
   const maxSide = viewerThumbSide();
   const key = url + '|' + maxSide;
-  if (thumbCache.has(key)) {
-    show(thumbCache.get(key));
+  const hitThumb = thumbCache.get(key);
+  if (hitThumb) {
+    show(hitThumb.dataUrl);
     markCardGif(img.closest('.card'), url);
+    recordContent(url, hitThumb);
     return;
   }
   const msg = { type: 'IGP_THUMB', url, pageUrl, maxSide, frameId: img.dataset.frameId || 0 };
@@ -278,7 +337,8 @@ function loadThumb(img) {
         return;
       }
     } else if (res && res.ok && res.dataUrl) {
-      rememberThumb(key, res.dataUrl);
+      rememberThumb(key, { dataUrl: res.dataUrl, md5: res.md5 || '' });
+      recordContent(url, res);
       if (res.gif) {
         gifUrls.set(url, !!res.passthrough);
         markCardGif(img.closest('.card'), url);
@@ -304,7 +364,8 @@ function paint() {
     const box = card.querySelector('input[type="checkbox"]');
     if (box) box.checked = !!on;
   });
-  $('stat').innerHTML = `已选 <b>${selected.size}</b> 张 · 共 <b>${viewItems.length}</b> 张`;
+  const merged = state.dedupe && dedupedHidden ? ` · 合并 <b>${dedupedHidden}</b> 张重复` : '';
+  $('stat').innerHTML = `已选 <b>${selected.size}</b> 张 · 共 <b>${viewItems.length}</b> 张${merged}`;
   $('dlSel').disabled = selected.size === 0;
   const label = $('dlSelLabel');
   if (label) label.textContent = selected.size ? `下载选中 (${selected.size})` : '下载选中';
@@ -384,7 +445,11 @@ async function downloadItems(items) {
   }
   if (!normal.length) return;
   const res = await sendBg({ type: 'IGP_DOWNLOAD', tabId: srcTabId, items: normal, opts: { concurrency: settings.concurrency || 4 } });
-  if (res && res.ok && res.state) toast(`下载完成：成功 ${res.state.ok}，失败 ${res.state.fail}`, res.state.fail ? 'warn' : 'ok');
+  if (res && res.ok && res.state) {
+    const s = res.state;
+    const skip = s.skipped ? `，跳过 ${s.skipped} 张内容重复` : '';
+    toast(`下载完成：成功 ${s.ok}，失败 ${s.fail}${skip}`, s.fail ? 'warn' : 'ok');
+  }
   else toast((res && res.error) || '下载失败', 'error');
 }
 
@@ -490,6 +555,20 @@ function applyThumbSize(size) {
 $('thumbSize').addEventListener('input', () => applyThumbSize(Number($('thumbSize').value)));
 $('thumbSize').addEventListener('change', saveUi);
 
+// 合并重复：同一张图的签名/尺寸/缩略地址只显示一条
+$('dedupe').addEventListener('change', () => {
+  state.dedupe = $('dedupe').checked;
+  saveUi();
+  render();
+  toast(
+    state.dedupe
+      ? dedupedHidden
+        ? `已合并 ${dedupedHidden} 张重复图片`
+        : '没有发现重复图片'
+      : '已显示全部地址（不再合并重复）'
+  );
+});
+
 // 隐藏预览失败的图片
 $('hideBroken').addEventListener('change', () => {
   state.hideBroken = $('hideBroken').checked;
@@ -524,6 +603,7 @@ function saveUi() {
     const ui = (r && r.uiState) || {};
     ui.thumbSize = state.thumbSize;
     ui.hideBroken = state.hideBroken;
+    ui.dedupe = state.dedupe;
     ui.theme = state.theme;
     chrome.storage.local.set({ uiState: ui });
   });
@@ -538,16 +618,19 @@ $('q').addEventListener('input', () => onFilter(false));
   const ui = got.uiState || {};
   state.thumbSize = ui.thumbSize || 116;
   state.hideBroken = !!ui.hideBroken;
+  state.dedupe = ui.dedupe !== false;
   state.theme = ui.theme === 'dark' ? 'dark' : 'light';
   applyThumbSize(state.thumbSize);
   applyTheme(state.theme, { persist: false });
   if ($('hideBroken')) $('hideBroken').checked = state.hideBroken;
+  if ($('dedupe')) $('dedupe').checked = state.dedupe;
   // 让筛选控件与弹窗保持一致的默认值
   $('minSize').value = String(settings.minWidth >= 300 ? settings.minWidth : 120);
 
   const res = await sendBg({ type: 'IGP_HANDOFF', id: handoffId });
   if (res && res.ok && res.data) {
     allItems = res.data.items || [];
+    contentFp.clear();
     pageUrl = res.data.pageUrl || '';
     srcTabId = res.data.tabId == null ? null : res.data.tabId;
     $('pageInfo').textContent = (res.data.pageTitle || pageUrl).slice(0, 80);

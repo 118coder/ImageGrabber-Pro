@@ -19,6 +19,26 @@ const DEBUG_PORT = 9403;
 const GIF = fs.readFileSync(path.join(__dirname, 'fixtures', 'anim.gif'));
 const GIF_DATA_URL = 'data:image/gif;base64,' + GIF.toString('base64');
 const TINY_GIF = Buffer.from('R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==', 'base64');
+/**
+ * 造一个 1×1 的 GIF，调色板颜色可换。
+ * 三个埋点像素如果字节完全相同，会被"内容一致"查重合并成一张——
+ * 那是正确行为，但这个用例要测的是尺寸筛选，所以给它们各自的颜色。
+ */
+function tinyGif(r, g, b) {
+  return Buffer.concat([
+    Buffer.from('GIF89a', 'ascii'),
+    Buffer.from([1, 0, 1, 0, 0x80, 0, 0]), // 逻辑屏幕：1×1，带 2 色全局调色板
+    Buffer.from([0, 0, 0, r, g, b]), // 调色板
+    Buffer.from([
+      0x21, 0xf9, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, // 图形控制扩展
+      0x2c, 0, 0, 0, 0, 1, 0, 1, 0, 0, // 图像描述符
+      0x02, 0x02, 0x44, 0x01, 0x00, // LZW 数据
+      0x3b // 结束
+    ])
+  ]);
+}
+const TINY_GIF_TRACKER = tinyGif(0, 0, 255);
+const TINY_GIF_PIXEL = tinyGif(255, 0, 0);
 function hashString(s) {
   let h = 5381;
   for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
@@ -61,7 +81,7 @@ const server = http.createServer((req, res) => {
   }
   if (/tiny\.gif|tracker\.gif|pixel\.gif/.test(req.url)) {
     res.writeHead(200, { 'Content-Type': 'image/gif', 'Cache-Control': 'public, max-age=600' });
-    res.end(TINY_GIF);
+    res.end(/tracker/.test(req.url) ? TINY_GIF_TRACKER : /pixel/.test(req.url) ? TINY_GIF_PIXEL : TINY_GIF);
     return;
   }
   if (/still\.png/.test(req.url)) {
@@ -140,7 +160,7 @@ function check(name, cond, extra) {
   ], { stdio: ['ignore', 'ignore', logF] });
 
   try {
-    const sw = await waitFor(async () => (await list()).find((t) => t.type === 'service_worker' && /background\.js/.test(t.url)), 45000, 'sw');
+    const sw = await waitFor(async () => (await list()).find((t) => t.type === 'service_worker' && /\/src\/background\.js$/.test(t.url)), 45000, 'sw');
     const extId = sw.url.match(/chrome-extension:\/\/([^/]+)/)[1];
     const b = await conn((await (await fetch(`http://127.0.0.1:${DEBUG_PORT}/json/version`)).json()).webSocketDebuggerUrl, true);
 
@@ -223,6 +243,10 @@ function check(name, cond, extra) {
     check('扫描结果仍保留这些小 GIF（切回全部尺寸可看）', out.tinyAll.length >= 3, out.tinyAll);
     check('全部尺寸 + GIF 类型筛选能找回小 GIF', gifOnlyTiny.length >= 3, { gifOnlyTiny, gifOnly });
     check('GIF 类型筛选只保留 GIF', gifOnly.length >= 4 && gifOnly.every((r) => /\.gif(?:[?#]|$)/.test(r.url)), gifOnly);
+    check('三个 1×1 埋点 GIF 都是有效图片（各自独立，没被合并）',
+      gifOnlyTiny.length >= 3 && gifOnlyTiny.every((r) => r.nw === 1) && new Set(gifOnlyTiny.map((r) => r.url)).size >= 3,
+      gifOnlyTiny);
+    check('埋点小 GIF 仍然带 GIF 标签', gifOnlyTiny.every((r) => r.tag === 'GIF'), gifOnlyTiny);
 
     console.log(`\n结果：通过 ${pass} 项，失败 ${fail} 项\n`);
   } finally {

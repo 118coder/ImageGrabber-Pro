@@ -52,7 +52,16 @@ const chrome = {
         // 假 offscreen：FETCH 返回 blob URL，ZIP 返回打包结果
         if (msg.type === 'FETCH') {
           if (/denied/.test(msg.url)) return { ok: false, error: 'HTTP 403' };
-          return { ok: true, objectUrl: 'blob:chrome-extension://test/fake-' + Math.random().toString(36).slice(2), size: 12345, type: 'image/jpeg', ext: 'jpg' };
+          // 两个不同地址、内容却完全一样：用来验证"一批里只存一份"
+          const md5 = /twin-/.test(msg.url) ? 'twin-content-hash' : '';
+          return {
+            ok: true,
+            objectUrl: 'blob:chrome-extension://test/fake-' + Math.random().toString(36).slice(2),
+            size: 12345,
+            type: 'image/jpeg',
+            ext: 'jpg',
+            md5
+          };
         }
         if (msg.type === 'ZIP') return { ok: true, objectUrl: 'blob:chrome-extension://test/zip', size: 55555, name: msg.zipName, count: msg.files.length };
         if (msg.type === 'CROP') return { ok: true, dataUrl: 'data:image/png;base64,AAAA' };
@@ -172,6 +181,13 @@ const sandbox = {
   parseFloat
 };
 sandbox.globalThis = sandbox;
+// Service worker 里的 importScripts：与真实扩展一致，按 src/ 下的相对路径加载
+sandbox.importScripts = function (...paths) {
+  for (const p of paths) {
+    const file = path.join(ROOT, 'src', path.basename(p));
+    vm.runInContext(fs.readFileSync(file, 'utf8'), sandbox, { filename: p });
+  }
+};
 vm.createContext(sandbox);
 vm.runInContext(code, sandbox, { filename: 'background.js' });
 
@@ -353,6 +369,70 @@ function check(name, cond, extra) {
   check('文件名不含 .. 或多余斜杠', downloads.every((d) => !d.filename.includes('..') && !d.filename.includes('//')), downloads.map((d) => d.filename));
   check('超长文件名被截断', downloads.every((d) => d.filename.length < 240), downloads.map((d) => d.filename.length));
   check('data: 图片有兜底文件名', downloads.some((d) => /canvas-03\.png$/.test(d.filename)), downloads.map((d) => d.filename));
+
+  console.log('\n[9] 落盘文件名与面板显示一致 / 批量下载去重');
+  await call({ type: 'IGP_SETTINGS_SET', settings: { folderTemplate: '', nameTemplate: '{name}' } });
+  const F = sandbox.buildFilename;
+  check('typeof buildFilename', typeof F === 'function', typeof F);
+  const uuidItem = {
+    url: 'https://cdn.example.com/0b3febed-43e5-4251-87f9-a42dd9ff9984?auth_key=abc',
+    alt: '123',
+    kind: 'img',
+    w: 800,
+    h: 600,
+    pageUrl: 'https://www.example.com/p'
+  };
+  const nameA = F(uuidItem, {}, 1);
+  check('UUID 地址用页面上的名字落盘（不是 UUID）', nameA === '123', nameA);
+  const nameQuery = F(
+    { url: 'https://cdn.example.com/0b3febed-43e5-4251-87f9-a42dd9ff9984?auth_key=a&format=jpg', alt: '123', kind: 'img', pageUrl: 'https://www.example.com/p' },
+    {},
+    1
+  );
+  check('格式只在参数里时也能补上扩展名', nameQuery === '123.jpg', nameQuery);
+  const nameReal = F(
+    { url: 'https://cdn.example.com/a/photo-1.jpg', alt: '封面', kind: 'img', w: 10, h: 10, pageUrl: 'https://www.example.com/p' },
+    {},
+    1
+  );
+  check('地址里有真实文件名时保持原样', nameReal === 'photo-1.jpg', nameReal);
+  const nameFileTpl = F(uuidItem, { nameTemplate: '{file}' }, 1);
+  check('{file} 仍可取到地址里的原始名', nameFileTpl === '0b3febed-43e5-4251-87f9-a42dd9ff9984', nameFileTpl);
+
+  const dupFiltered = sandbox.filterItems(
+    [
+      { url: 'https://cdn.example.com/a/photo.png?auth_key=a', kind: 'img', w: 400, h: 300, alt: '', pageUrl: 'https://www.example.com/p' },
+      { url: 'https://cdn.example.com/a/photo.png?auth_key=b', kind: 'img', w: 400, h: 300, alt: '', pageUrl: 'https://www.example.com/p' },
+      { url: 'https://cdn.example.com/a/photo-300x200.png', kind: 'img', w: 300, h: 200, alt: '', pageUrl: 'https://www.example.com/p' },
+      { url: 'https://cdn.example.com/a/other.png', kind: 'img', w: 400, h: 300, alt: '', pageUrl: 'https://www.example.com/p' }
+    ],
+    { includeProbable: false, includeTiny: false, minWidth: 0, minHeight: 0 }
+  );
+  // 签名参数不同的两份合并成一条；photo-300x200 是另一个分辨率，按设计单独保留
+  check(
+    '右键"下载本页全部图片"只合并真正的重复项',
+    dupFiltered.length === 3 &&
+      dupFiltered.filter((it) => /photo\.png/.test(it.url)).length === 1 &&
+      dupFiltered.some((it) => /photo-300x200/.test(it.url)) &&
+      dupFiltered.some((it) => /other\.png/.test(it.url)),
+    dupFiltered.map((it) => it.url)
+  );
+
+  console.log('\n[10] 一批下载里内容完全相同的图只存一份');
+  await call({ type: 'IGP_SETTINGS_SET', settings: { folderTemplate: '', nameTemplate: '{name}', concurrency: 2 } });
+  downloads.length = 0;
+  const twinRes = await call({
+    type: 'IGP_DOWNLOAD',
+    tabId: 1,
+    items: [
+      { url: 'https://cdn.example.com/twin-a/one.jpg', kind: 'img', w: 10, h: 10, alt: '', pageUrl: 'https://www.example.com/p' },
+      { url: 'https://cdn.example.com/twin-b/two.jpg', kind: 'img', w: 10, h: 10, alt: '', pageUrl: 'https://www.example.com/p' },
+      { url: 'https://cdn.example.com/plain.jpg', kind: 'img', w: 10, h: 10, alt: '', pageUrl: 'https://www.example.com/p' }
+    ],
+    opts: {}
+  });
+  check('内容重复的第二张被跳过', twinRes.state.ok === 2 && twinRes.state.skipped === 1, twinRes.state);
+  check('跳过的图没有真的落盘', downloads.length === 2, downloads.map((d) => d.filename));
 
   console.log(`\n结果：通过 ${pass} 项，失败 ${fail} 项\n`);
   process.exit(fail ? 1 : 0);

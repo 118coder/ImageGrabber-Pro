@@ -969,6 +969,31 @@ select {
   opacity: 0;
 }
 
+/* 重复合并角标：同一张图在页面里有多个地址时显示 ×N */
+.dup-badge {
+  position: absolute;
+  left: 7px;
+  bottom: 7px;
+  z-index: 3;
+  padding: 1px 6px;
+  border: 1px solid var(--tag-border);
+  border-radius: 6px;
+  background: var(--tag-bg);
+  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.14);
+  color: var(--accent);
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 1.5;
+  letter-spacing: 0.1px;
+  font-variant-numeric: tabular-nums;
+  cursor: help;
+  backdrop-filter: blur(8px);
+}
+
+.thumb.is-broken .dup-badge {
+  display: none;
+}
+
 /* 悬停操作条 */
 .acts {
   position: absolute;

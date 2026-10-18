@@ -6,6 +6,19 @@
 
 const objectUrls = new Map(); // objectUrl -> 创建时间
 
+// ------------------------------------------------------------------ 内容指纹
+const MD5_MAX_BYTES = 8 * 1024 * 1024;
+
+/** 原始字节的 MD5（跨域图片只能在这里拿到字节，是"字节完全相同"的铁证） */
+async function md5OfBlob(blob) {
+  if (typeof IGPHash === 'undefined' || !blob || !blob.size || blob.size > MD5_MAX_BYTES) return '';
+  try {
+    return IGPHash.md5(new Uint8Array(await blob.arrayBuffer()));
+  } catch (_) {
+    return '';
+  }
+}
+
 // ------------------------------------------------------------------ 基础工具
 function extFromMime(mime) {
   const m = String(mime || '').toLowerCase().split(';')[0].trim();
@@ -116,7 +129,9 @@ async function handleFetch(msg) {
       objectUrl,
       size,
       type,
-      ext: extFromMime(type)
+      ext: extFromMime(type),
+      // 下载前先知道字节指纹，就能在"一批里多张图内容其实相同"时只存一份
+      md5: await md5OfBlob(blob)
     };
     const limit = typeof maxDataUrl === 'number' ? maxDataUrl : 1_500_000;
     if (wantDataUrl === true && size <= limit) {
@@ -321,26 +336,27 @@ async function handleThumb(msg) {
     if (!res.ok) return { ok: false, error: 'HTTP ' + res.status };
     const blob = await res.blob();
     if (!blob.size) return { ok: false, error: '内容为空' };
+    const md5 = await md5OfBlob(blob);
     const type = (blob.type || '').toLowerCase();
     const isGif = /gif/.test(type) || /\.gif(?:[?#]|$)/i.test(url);
 
     // 小/中等 GIF 直接原样交给 <img>，保留动画
     if (isGif && blob.size <= GIF_PREVIEW_MAX) {
       const dataUrl = await blobToDataUrl(blob);
-      return { ok: true, dataUrl, passthrough: true, gif: true, size: blob.size, type };
+      return { ok: true, dataUrl, passthrough: true, gif: true, size: blob.size, type, md5 };
     }
 
     // SVG 用 createImageBitmap 解码不稳定，直接原样交给 <img>（本身很小、可缩放）
     if (/svg/.test(type) || blob.size < 3000) {
       const dataUrl = await blobToDataUrl(blob);
-      return { ok: true, dataUrl, passthrough: true, gif: isGif, size: blob.size, type };
+      return { ok: true, dataUrl, passthrough: true, gif: isGif, size: blob.size, type, md5 };
     }
 
     const bmp = await createImageBitmap(blob).catch(() => null);
     if (!bmp) {
       // 解码失败（罕见格式）——退回原图，至少能显示
       const dataUrl = await blobToDataUrl(blob);
-      return { ok: true, dataUrl, passthrough: true, gif: isGif, size: blob.size, type };
+      return { ok: true, dataUrl, passthrough: true, gif: isGif, size: blob.size, type, md5 };
     }
 
     const srcW = bmp.width;
@@ -379,6 +395,7 @@ async function handleThumb(msg) {
       srcBytes: blob.size,
       thumbBytes: outBlob.size,
       gif: isGif,
+      md5,
       type: outBlob.type
     };
   } catch (e) {
