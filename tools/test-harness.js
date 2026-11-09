@@ -314,13 +314,23 @@ function check(name, cond, extra) {
   check('导出的是裁剪后的 PNG', String(canvasRes.dataUrl).startsWith('data:image/png'), canvasRes.dataUrl && canvasRes.dataUrl.slice(0, 30));
 
   console.log('\n[5] ZIP 打包');
+  const zipItems = dlItems.slice(0, 3).map((i, k) => Object.assign({ index: k + 1 }, i));
   const zipRes = await call({
     type: 'IGP_ZIP',
-    items: dlItems.slice(0, 3).map((i, k) => Object.assign({ index: k + 1 }, i)),
-    pageUrl: 'https://www.example.com/post/1'
+    items: zipItems,
+    pageUrl: 'https://www.example.com/post/1',
+    pageTitle: '【图集】风景摄影精选 第12话'
   });
   check('打包成功', zipRes.ok && zipRes.count === 3, zipRes);
-  check('ZIP 文件名带站点与日期', /^www\.example\.com-\d{4}-\d{2}-\d{2}\.zip$/.test(zipRes.name), zipRes.name);
+  check('ZIP 包名是 页面标题_日期', /^【图集】风景摄影精选 第12话_\d{4}-\d{2}-\d{2}\.zip$/.test(zipRes.name), zipRes.name);
+  check('返回 blob 地址交页面用 <a download> 保存（后台不再直接下载）',
+    typeof zipRes.objectUrl === 'string' && zipRes.objectUrl.startsWith('blob:'), zipRes.objectUrl);
+  const zipResNoTitle = await call({
+    type: 'IGP_ZIP',
+    items: zipItems,
+    pageUrl: 'https://www.example.com/post/1'
+  });
+  check('没有标题时包名退回 域名_日期', /^www\.example\.com_\d{4}-\d{2}-\d{2}\.zip$/.test(zipResNoTitle.name), zipResNoTitle.name);
   const zipCall = outbox.filter((m) => m.target === 'offscreen' && m.type === 'ZIP').pop();
   check('ZIP 里每个文件都有文件名', zipCall.files.every((f) => f.name && f.name.length > 3), zipCall.files.map((f) => f.name));
 

@@ -317,6 +317,20 @@ function today() {
   const d = new Date();
   return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
 }
+
+/**
+ * ZIP 包名：优先用页面标题（用户一眼能认出是哪页的图），拿不到再用域名。
+ * 末尾统一加日期，避免不同天的包在下载目录里混在一起。
+ */
+function buildZipName(title, host) {
+  let t = String(title || '')
+    .replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 40)
+    .replace(/[.\s]+$/, '');
+  return sanitize(t || host, host) + '_' + today() + '.zip';
+}
 function sanitize(s, fallback) {
   const out = String(s == null ? '' : s)
     .replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_')
@@ -958,16 +972,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const res = await offscreenCall({
             type: 'ZIP',
             files,
-            zipName: pageHost + '-' + today() + '.zip',
+            zipName: buildZipName(msg.pageTitle, pageHost),
             timeout: 60000
           });
           if (!res || !res.ok) {
             sendResponse({ ok: false, error: (res && res.error) || '打包失败' });
             break;
           }
-          const saved = await downloadViaUrl(res.objectUrl, '图集捕手/' + res.name);
+          // 不在后台用 chrome.downloads.download：部分 Edge 版本会对 blob 地址
+          // 忽略 filename 参数，落盘名变成 blob 的 UUID。改成把 blob 地址还给
+          // 弹窗/图库页面，由页面用 <a download> 触发保存（实测唯一有效的命名方式）。
           setTimeout(() => offscreenCall({ type: 'RELEASE', objectUrl: res.objectUrl }).catch(() => {}), 300000);
-          sendResponse({ ok: saved.ok, error: saved.error, count: res.count, size: res.size, name: res.name });
+          sendResponse({ ok: true, objectUrl: res.objectUrl, count: res.count, size: res.size, name: res.name });
           break;
         }
         case 'IGP_CANCEL':
