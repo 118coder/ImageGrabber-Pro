@@ -13,7 +13,7 @@
 
 ## 快速开始
 
-1. 到 [Releases](../../releases/latest) 下载最新的 `图集捕手-ImageGrabber-Pro-vx.y.z.zip`
+1. 到 [Releases](../../releases/latest) 下载最新的 `ImageGrabber-Pro-vx.y.z.zip`（GitHub 资产名不支持中文，故用英文命名）
 2. 解压到任意**固定目录**（别放临时目录，删掉扩展就失效）
 3. 打开 `edge://extensions/` 或 `chrome://extensions/`，开启 **开发人员模式**
 4. 点 **加载解压缩的扩展**，选中解压出的文件夹（含 `manifest.json` 的那一层）
