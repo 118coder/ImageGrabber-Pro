@@ -13,6 +13,7 @@ let itemByUrl = new Map(); // 当前视图的 url → 条目，点击时 O(1) �
 let selected = new Set();
 let tabId = null;
 let pageUrl = '';
+let pageTitle = ''; // 打包 ZIP 时用来给压缩包起名
 let settings = {};
 let renderedCount = 0;
 const RENDER_LIMIT = 600; // 一次性渲染太多缩略图会卡，滚动到底自动追加
@@ -270,6 +271,7 @@ async function rescan(silent) {
   }
   tabId = tab.id;
   pageUrl = tab.url || '';
+  pageTitle = tab.title || '';
   $('pageInfo').textContent = tab.title ? tab.title.slice(0, 60) : pageUrl.slice(0, 60);
   $('pageInfo').title = tab.title || pageUrl;
 
@@ -1127,9 +1129,18 @@ $('zip').addEventListener('click', async () => {
   }
   if (!payload.length) return toast('没有可打包的内容', 'warn');
   toast('正在打包…');
-  const res = await sendBg({ type: 'IGP_ZIP', items: payload, pageUrl });
-  if (res && res.ok) toast(`已打包 ${res.count} 个文件（${(res.size / 1048576).toFixed(1)} MB）`, 'ok');
-  else toast((res && res.error) || '打包失败', 'error');
+  const res = await sendBg({ type: 'IGP_ZIP', items: payload, pageUrl, pageTitle });
+  if (res && res.ok) {
+    // 用 <a download> 触发保存：downloads.download 的 filename 参数在这台 Edge
+    // 上会被忽略，落盘名会变成 blob 的 UUID（实测 <a download> 是唯一有效的）
+    const a = document.createElement('a');
+    a.href = res.objectUrl;
+    a.download = res.name || '图集捕手.zip';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    toast(`已打包 ${res.count} 个文件（${(res.size / 1048576).toFixed(1)} MB）`, 'ok');
+  } else toast((res && res.error) || '打包失败', 'error');
 });
 
 $('selAll').addEventListener('click', () => {

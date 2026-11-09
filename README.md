@@ -13,7 +13,7 @@
 
 ## 快速开始
 
-1. 到 [Releases](../../releases/latest) 下载最新的 `ImageGrabber-Pro-x.y.z.zip`
+1. 到 [Releases](../../releases/latest) 下载最新的 `图集捕手-ImageGrabber-Pro-vx.y.z.zip`
 2. 解压到任意**固定目录**（别放临时目录，删掉扩展就失效）
 3. 打开 `edge://extensions/` 或 `chrome://extensions/`，开启 **开发人员模式**
 4. 点 **加载解压缩的扩展**，选中解压出的文件夹（含 `manifest.json` 的那一层）
@@ -28,7 +28,7 @@
 | 点图标 / `Alt`+`Shift`+`I` | 打开面板；图标上的数字是本页识别到的图片数 |
 | 点缩略图 | 选中 / 取消；底部可「下载选中」「全部下载」 |
 | 悬停卡片 | 下载 · 复制地址 · 在页面上定位 · 查看原图 |
-| 打包 ZIP | 把选中的图片打成一个压缩包 |
+| 打包 ZIP | 把选中的图片打成一个压缩包，直接存到下载根目录；包名是「页面标题_日期.zip」（拿不到标题时用域名）。用 `<a download>` 触发保存——部分 Edge 版本会忽略下载 API 的文件名参数，导致包名变成乱码 UUID |
 | 大小滑块 | 调缩略图尺寸（72–260px），**只改显示，不重新加载** |
 | GIF 动图 | 小/中等 GIF 直接在缩略图里播放动画，并带 `GIF` 标签；超过 6 MB 的显示静态首帧以避免卡顿 |
 | GIF 筛选 | 类型筛选可选「GIF 动图」；尺寸筛选同样作用于 GIF，尺寸未知的 GIF 按小图处理，默认挡掉 1×1 埋点 |
@@ -98,6 +98,7 @@ npm install --no-save jsdom         # 只有 test-scanner.js 需要
 node tools/test-scanner.js          # 61 项：各类图片形态识别
 node tools/test-harness.js          # 42 项：采集/并发下载/命名/三级兜底/ZIP/右键菜单/批量去重
 node tools/test-zip.js              # 14 项：手写 ZIP 的 CRC32 与 Windows 实机解压
+node tools/test-zip-e2e.js          # 4 项：真机打包落盘名（有头模式，会短暂弹窗，测完自动删产物）
 node tools/test-e2e.js              # 21 项：真机 headless Edge 端到端
 node tools/test-thumb-layout.js     # 15 项：布局、缩略图降采样、滑块不重载
 node tools/test-degraded.js         # 12 项：超时/失败/脏数据下的降级提示

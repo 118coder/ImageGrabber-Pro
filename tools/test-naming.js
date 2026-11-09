@@ -77,5 +77,20 @@ check('data: / blob: / canvas: 交给调用方处理（返回空）',
     N.filename({ url: 'blob:http://x/1' }) === '',
   null);
 
+console.log('\n[7] GBK 百分号编码（老站常见的 %XX 乱码）');
+const gbkSupported = (() => {
+  try { new TextDecoder('gbk'); return true; } catch (_) { return false; }
+})();
+if (gbkSupported) {
+  check('%B4%F3%CD%BC.jpg → 大图.jpg',
+    N.filename({ url: 'https://forum.example.com/a/%B4%F3%CD%BC.jpg' }) === '大图.jpg', null);
+  check('GBK 混排（%XX + 原样字符）也能还原',
+    N.filename({ url: 'https://forum.example.com/a/%B4%F3%CD%BC-01.jpg' }) === '大图-01.jpg', null);
+  check('纯 ASCII 名字不受影响',
+    N.filename({ url: 'https://cdn.example.com/a/photo-1.jpg' }) === 'photo-1.jpg', null);
+} else {
+  console.log('  （当前环境不支持 TextDecoder("gbk")，跳过 GBK 用例）');
+}
+
 console.log(`\n结果：通过 ${pass} 项，失败 ${fail} 项\n`);
 process.exit(fail ? 1 : 0);

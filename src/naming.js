@@ -29,10 +29,28 @@
     /^(?:jpe?g|png|gif|webp|bmp|svg|avif|tiff?|ico|heic|heif|jfif|apng|mp4|webm|ogg|mov|m4v)$/i;
 
   function safeDecode(s) {
+    const str = String(s || '');
+    if (!/%[0-9a-fA-F]{2}/.test(str)) return str;
     try {
-      return decodeURIComponent(s);
+      return decodeURIComponent(str);
     } catch (_) {
-      return s;
+      // UTF-8 解不开：多半是老站把 GBK 文件名编成了 %XX，按 GBK 再还原一次
+    }
+    try {
+      const bytes = [];
+      for (let i = 0; i < str.length; ) {
+        const hex = str.slice(i + 1, i + 3);
+        if (str[i] === '%' && /^[0-9a-fA-F]{2}$/.test(hex)) {
+          bytes.push(parseInt(hex, 16));
+          i += 3;
+        } else {
+          bytes.push(...new TextEncoder().encode(str[i]));
+          i += 1;
+        }
+      }
+      return new TextDecoder('gbk').decode(new Uint8Array(bytes));
+    } catch (_) {
+      return str;
     }
   }
 

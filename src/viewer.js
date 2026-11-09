@@ -11,6 +11,7 @@ let viewItems = [];
 let selected = new Set();
 let srcTabId = null;
 let pageUrl = '';
+let pageTitle = ''; // 打包 ZIP 时用来给压缩包起名
 let handoffId = new URLSearchParams(location.search).get('id') || '';
 let settings = {};
 
@@ -504,8 +505,18 @@ $('zip').addEventListener('click', async () => {
   }
   if (!payload.length) return toast('没有可打包的内容', 'warn');
   toast('正在打包…');
-  const res = await sendBg({ type: 'IGP_ZIP', items: payload, pageUrl });
-  toast(res && res.ok ? `已打包 ${res.count} 个文件（${(res.size / 1048576).toFixed(1)} MB）` : (res && res.error) || '打包失败', res && res.ok ? 'ok' : 'error');
+  const res = await sendBg({ type: 'IGP_ZIP', items: payload, pageUrl, pageTitle });
+  if (res && res.ok) {
+    // 用 <a download> 触发保存：downloads.download 的 filename 参数在这台 Edge
+    // 上会被忽略，落盘名会变成 blob 的 UUID（实测 <a download> 是唯一有效的）
+    const a = document.createElement('a');
+    a.href = res.objectUrl;
+    a.download = res.name || '图集捕手.zip';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    toast(`已打包 ${res.count} 个文件（${(res.size / 1048576).toFixed(1)} MB）`, 'ok');
+  } else toast((res && res.error) || '打包失败', 'error');
 });
 $('options').addEventListener('click', () => chrome.runtime.openOptionsPage());
 $('openSrc').addEventListener('click', () => {
@@ -632,8 +643,9 @@ $('q').addEventListener('input', () => onFilter(false));
     allItems = res.data.items || [];
     contentFp.clear();
     pageUrl = res.data.pageUrl || '';
+    pageTitle = res.data.pageTitle || '';
     srcTabId = res.data.tabId == null ? null : res.data.tabId;
-    $('pageInfo').textContent = (res.data.pageTitle || pageUrl).slice(0, 80);
+    $('pageInfo').textContent = (pageTitle || pageUrl).slice(0, 80);
     // 清掉临时数据
     chrome.storage.session.remove('igp_handoff_' + handoffId);
   } else {
@@ -642,7 +654,8 @@ $('q').addEventListener('input', () => onFilter(false));
     if (tab && !/^(chrome|edge)/.test(tab.url || '')) {
       srcTabId = tab.id;
       pageUrl = tab.url || '';
-      $('pageInfo').textContent = (tab.title || pageUrl).slice(0, 80);
+      pageTitle = tab.title || '';
+      $('pageInfo').textContent = (pageTitle || pageUrl).slice(0, 80);
       const r = await sendBg({ type: 'IGP_COLLECT', tabId: tab.id, opts: { deep: true, scripts: true, budgetMs: 400 } });
       if (r && r.ok) allItems = r.items || [];
     }
